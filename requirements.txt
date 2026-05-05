@@ -1,0 +1,15 @@
+# Core
+PySide6>=6.7
+sounddevice>=0.4.7
+numpy>=1.26,<2.3
+faster-whisper>=1.0.3
+pystray>=0.19.5
+Pillow>=10.0
+huggingface_hub>=0.24
+scipy>=1.11
+
+# Optional: Parakeet via NVIDIA NeMo (heavy install)
+# nemo_toolkit[asr]>=2.0.0
+
+# PyTorch for RTX 5070 (Blackwell sm_120) — install separately:
+# pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio

@@ -1,0 +1,224 @@
+/* LocalWhisper — macOS-inspired light theme */
+
+QWidget {
+    font-family: "Segoe UI Variable Display", "Segoe UI Variable", "Inter", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+    color: #1d1d1f;
+}
+
+QMainWindow, #MainWindow, QDialog {
+    background: #f5f5f7;
+}
+
+/* Sidebar */
+#Sidebar {
+    background: #f5f5f7;
+    border-right: 1px solid #e5e5ea;
+}
+#SidebarHeader {
+    padding: 22px 18px 16px;
+    color: #6e6e73;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+#Sidebar QListWidget {
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 4px 8px;
+}
+#Sidebar QListWidget::item {
+    padding: 4px 10px;
+    border-radius: 8px;
+    color: #1d1d1f;
+    margin: 1px 4px;
+}
+#Sidebar QListWidget::item:hover {
+    background: #ebebee;
+}
+#Sidebar QListWidget::item:selected {
+    background: #ebebee;
+    color: #1d1d1f;
+    font-weight: 600;
+}
+
+/* Content area */
+#ContentArea {
+    background: #f5f5f7;
+}
+#PageTitle {
+    font-size: 26px;
+    font-weight: 700;
+    color: #1d1d1f;
+    padding: 0;
+}
+#PageSubtitle {
+    color: #6e6e73;
+    font-size: 13px;
+    padding: 0;
+}
+
+/* Cards */
+QFrame#Card {
+    background: white;
+    border: 1px solid #e8e8ec;
+    border-radius: 12px;
+    padding: 0;
+}
+QLabel#CardTitle {
+    font-weight: 600;
+    color: #1d1d1f;
+    padding: 14px 18px 4px;
+    font-size: 13px;
+}
+QLabel#CardRowLabel {
+    color: #1d1d1f;
+    padding: 12px 18px;
+    font-size: 13px;
+}
+QLabel#CardRowSub {
+    color: #8e8e93;
+    font-size: 12px;
+    padding: 0 18px 12px;
+}
+QFrame#CardSeparator {
+    background: #efeff2;
+    max-height: 1px;
+    min-height: 1px;
+    margin: 0 16px;
+    border: none;
+}
+
+/* Inputs */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: white;
+    border: 1px solid #d2d2d7;
+    border-radius: 6px;
+    padding: 5px 9px;
+    selection-background-color: #007aff;
+    selection-color: white;
+    min-height: 22px;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+    border: 1px solid #007aff;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+QComboBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #6e6e73;
+    margin-right: 8px;
+}
+QComboBox QAbstractItemView {
+    background: white;
+    border: 1px solid #d2d2d7;
+    border-radius: 6px;
+    selection-background-color: #007aff;
+    selection-color: white;
+    padding: 4px;
+}
+
+/* Buttons */
+QPushButton {
+    background: white;
+    border: 1px solid #d2d2d7;
+    border-radius: 7px;
+    padding: 6px 14px;
+    color: #1d1d1f;
+    min-height: 18px;
+}
+QPushButton:hover {
+    background: #f5f5f7;
+}
+QPushButton:pressed {
+    background: #ebebee;
+}
+QPushButton#PrimaryButton {
+    background: #007aff;
+    border: 1px solid #007aff;
+    color: white;
+    font-weight: 600;
+}
+QPushButton#PrimaryButton:hover {
+    background: #0066d6;
+}
+QPushButton#PrimaryButton:pressed {
+    background: #0055b3;
+}
+
+/* Tables */
+QTableView, QTableWidget {
+    background: white;
+    border: 1px solid #e8e8ec;
+    border-radius: 10px;
+    gridline-color: #f0f0f3;
+    selection-background-color: #007aff;
+    selection-color: white;
+}
+QHeaderView::section {
+    background: #fafafc;
+    border: none;
+    border-bottom: 1px solid #e8e8ec;
+    padding: 8px 10px;
+    font-weight: 600;
+    color: #6e6e73;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #c5c5c8;
+    border-radius: 5px;
+    min-height: 20px;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0;
+}
+
+/* Toolbar / page header bar */
+#PageHeader {
+    background: #ffffff;
+    border-bottom: 1px solid #e8e8ec;
+}
+QLabel#PageHeaderTitle {
+    color: #1d1d1f;
+    font-weight: 600;
+    font-size: 13px;
+}
+QPushButton#PageHeaderBack {
+    background: transparent;
+    border: none;
+    color: #6e6e73;
+    font-size: 14px;
+    padding: 4px 8px;
+}
+QPushButton#PageHeaderBack:hover {
+    color: #1d1d1f;
+}
+
+/* Hotkey chip */
+QLabel#KeyChip {
+    background: #f0f0f3;
+    border: 1px solid #d8d8dd;
+    border-radius: 5px;
+    padding: 2px 8px;
+    color: #3a3a3c;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QListWidget {
+    background: white;
+    border: 1px solid #e8e8ec;
+    border-radius: 8px;
+}

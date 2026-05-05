@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localwhisper"
+version = "0.1.0"
+description = "Local dictation app for Windows powered by Whisper / Parakeet on RTX GPUs."
+requires-python = ">=3.10,<3.13"
+authors = [{ name = "Pedro" }]
+
+dependencies = [
+    "PySide6>=6.7",
+    "sounddevice>=0.4.7",
+    "numpy>=1.26,<2.3",
+    "faster-whisper>=1.0.3",
+    "pystray>=0.19.5",
+    "Pillow>=10.0",
+    "huggingface_hub>=0.24",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+parakeet = [
+    "nemo_toolkit[asr]>=2.0.0",
+    "torch>=2.7.1",
+]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.6",
+]
+
+[project.scripts]
+localwhisper = "localwhisper.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["localwhisper*"]
+
+[tool.setuptools.package-data]
+localwhisper = [
+    "ui/style.qss",
+    "resources/*",
+    "resources/icons/*",
+    "resources/icons/tray-icons/*",
+]
