@@ -7,8 +7,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+
+# Under pythonw.exe (no console), sys.stdout / sys.stderr are None; any print()
+# or warning during import will raise AttributeError and crash the app silently.
+# Redirect to log files in %LOCALAPPDATA%\LocalWhisper before importing anything
+# that may write on import (torch, pyannote, etc).
+if sys.stdout is None or sys.stderr is None:
+    _log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "LocalWhisper")
+    os.makedirs(_log_dir, exist_ok=True)
+    sys.stdout = open(os.path.join(_log_dir, "app.log"), "a", encoding="utf-8", buffering=1)
+    sys.stderr = open(os.path.join(_log_dir, "app.log.err"), "a", encoding="utf-8", buffering=1)
 
 import numpy as np
 
