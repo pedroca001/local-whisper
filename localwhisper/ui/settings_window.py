@@ -26,6 +26,7 @@ from .pages.history import HistoryPage
 from .pages.home import HomePage
 from .pages.modes import ModesPage
 from .pages.sound import SoundPage
+from .pages.transcribe_file import TranscribeFilePage
 from .pages.vocabulary import VocabularyPage
 
 
@@ -45,7 +46,7 @@ class SettingsWindow(QMainWindow):
     config_changed = Signal()
     record_now_requested = Signal()
 
-    SIDEBAR_ITEMS = ["Home", "Modes", "Vocabulary", "Configuration", "Sound", "History"]
+    SIDEBAR_ITEMS = ["Home", "Modes", "Transcribe File", "Vocabulary", "Configuration", "Sound", "History"]
 
     def __init__(self, cfg: Config, parent=None):
         super().__init__(parent)
@@ -108,6 +109,7 @@ class SettingsWindow(QMainWindow):
         # Pages — order MUST match SIDEBAR_ITEMS
         self.page_home = HomePage(cfg, on_record_now=lambda: self.record_now_requested.emit())
         self.page_modes = ModesPage(cfg)
+        self.page_transcribe_file = TranscribeFilePage(cfg)
         self.page_vocabulary = VocabularyPage(cfg)
         self.page_config = ConfigurationPage(cfg)
         self.page_sound = SoundPage(cfg)
@@ -116,6 +118,7 @@ class SettingsWindow(QMainWindow):
         self._page_by_name = {
             "Home": self.page_home,
             "Modes": self.page_modes,
+            "Transcribe File": self.page_transcribe_file,
             "Vocabulary": self.page_vocabulary,
             "Configuration": self.page_config,
             "Sound": self.page_sound,

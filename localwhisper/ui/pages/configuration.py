@@ -129,6 +129,25 @@ class ConfigurationPage(QWidget):
         card2.add_row("Launch on Windows startup", self.auto_launch)
         v.addWidget(card2)
 
+        # HuggingFace token (for speaker diarization)
+        card3 = Card()
+        card3.add_title("Speaker diarization")
+        self.hf_token = QLineEdit(cfg.hf_token or "")
+        self.hf_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.hf_token.setPlaceholderText("hf_… (paste your HuggingFace access token)")
+        self.hf_token.setMinimumWidth(280)
+        self.hf_token.editingFinished.connect(self._save_token)
+        card3.add_row(
+            "HuggingFace token",
+            self.hf_token,
+            sub=(
+                "Required only for the 'Transcribe File' speaker-identification feature. "
+                "It's free: accept the model terms at huggingface.co/pyannote/speaker-diarization-3.1, "
+                "then create a token at huggingface.co/settings/tokens. Stored locally."
+            ),
+        )
+        v.addWidget(card3)
+
         v.addStretch(1)
 
         self.save_dir.editingFinished.connect(self._save)
@@ -158,3 +177,7 @@ class ConfigurationPage(QWidget):
         self.cfg.save_dir = self.save_dir.text().strip() or self.cfg.save_dir
         self.cfg.save()
         self.config_changed.emit()
+
+    def _save_token(self):
+        self.cfg.hf_token = self.hf_token.text().strip()
+        self.cfg.save()

@@ -27,3 +27,6 @@ dist/
 # Windows
 Thumbs.db
 Desktop.ini
+
+# Claude Code worktrees / local state
+.claude/

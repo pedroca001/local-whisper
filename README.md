@@ -8,6 +8,7 @@ estilo macOS e injeção de texto direto na janela focada.
 - **Streaming ao vivo** (palavras aparecem conforme você fala) **ou final-dump** (texto inteiro ao parar)
 - **System tray** com menu Settings / Record manually / Quit
 - **History** dos últimos 7 dias com busca, espelhado em arquivos `.txt` por dia
+- **Transcribe File**: transcreve arquivos de áudio/vídeo (mp3, mp4, wav, mkv...) com identificação de falantes (diarização) via pyannote
 
 ## Requisitos
 
@@ -16,27 +17,59 @@ estilo macOS e injeção de texto direto na janela focada.
 - NVIDIA RTX 5070 (ou qualquer GPU NVIDIA com 6GB+; CPU também funciona, mais lento)
 - Driver NVIDIA recente com suporte a CUDA 12.8
 
-## Instalação
+## Instalação (rodar do source)
 
-```bash
-# 1) Crie um venv
+```powershell
+# 1) Clone o repo
+git clone https://github.com/pedroca001/local-whisper.git
+cd local-whisper
+
+# 2) Crie um venv (Python 3.10–3.12 recomendado)
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 
-# 2) Instale o PyTorch para sua GPU (Blackwell sm_120 precisa de cu128)
+# 3) Instale o PyTorch da sua GPU (Blackwell sm_120 / RTX 50xx precisa de cu128)
 pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
 
-# 3) Instale o app
+# 4) Instale o app em modo editable
 pip install -e .
 
-# 4) (Opcional) Para usar Parakeet v3:
-pip install "nemo_toolkit[asr]>=2.0.0"
+# 5) (Opcional) Diarização — identificação de falantes em arquivos
+pip install -e ".[diarize]"
+
+# 6) (Opcional) Parakeet v3
+pip install -e ".[parakeet]"
 ```
+
+### Atualizar para a versão mais nova
+
+```powershell
+cd C:\caminho\para\local-whisper
+git pull
+.\.venv\Scripts\Activate.ps1
+pip install -e .          # reaplica deps caso o pyproject tenha mudado
+```
+
+Como está em modo `-e` (editable), qualquer `git pull` já refletre no app sem reinstalar.
+
+### Habilitar diarização (opcional)
+
+Pra usar "Identify speakers" em **Transcribe File**:
+
+1. Aceite os termos do modelo (logado no HuggingFace):
+   <https://huggingface.co/pyannote/speaker-diarization-3.1>
+2. Gere um token grátis tipo *Read*: <https://huggingface.co/settings/tokens>
+3. No app: **Settings → Configuration → HuggingFace token** → cole o token.
+
+A diarização roda 100% local depois do download inicial (~70 MB).
 
 ## Uso
 
-```bash
-# Rodar o app completo (tray + hotkey + UI)
+```powershell
+# Rodar o app completo (tray + hotkey + UI) — sem janela de console:
+.\.venv\Scripts\pythonw.exe run.py
+
+# Ou normal (com console pra ver logs):
 python run.py
 
 # Testar a transcrição via CLI (gravação de 5s)

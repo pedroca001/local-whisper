@@ -98,6 +98,25 @@ def sound_icon() -> QIcon:
     return _to_qicon(img)
 
 
+def transcribe_file_icon() -> QIcon:
+    img, d = _new()
+    # Document-with-folded-corner background
+    d.rounded_rectangle((9, 6, SIZE - 9, SIZE - 6), radius=4, fill=FILL_BLUE)
+    # Folded corner triangle (lighter)
+    d.polygon([(SIZE - 9, 6), (SIZE - 9, 14), (SIZE - 17, 6)], fill=(255, 255, 255, 120))
+    # Waveform bars (white)
+    cx = SIZE / 2
+    bar_w = 2
+    heights = [6, 12, 18, 12, 8, 14, 10]
+    start_x = cx - (len(heights) * (bar_w + 2)) / 2 + 1
+    for i, h in enumerate(heights):
+        x = start_x + i * (bar_w + 2)
+        y0 = SIZE / 2 - h / 2
+        y1 = SIZE / 2 + h / 2
+        d.rounded_rectangle((x, y0, x + bar_w, y1), radius=1, fill=(255, 255, 255, 255))
+    return _to_qicon(img)
+
+
 def history_icon() -> QIcon:
     img, d = _new()
     # Clock circle outline
@@ -112,6 +131,7 @@ def all_icons() -> dict[str, QIcon]:
     return {
         "Home": home_icon(),
         "Modes": modes_icon(),
+        "Transcribe File": transcribe_file_icon(),
         "Vocabulary": vocabulary_icon(),
         "Configuration": configuration_icon(),
         "Sound": sound_icon(),

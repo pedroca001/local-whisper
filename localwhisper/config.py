@@ -48,6 +48,10 @@ class Config:
     auto_launch: bool = False
     compute_type: str = "float16"  # float16 | int8_float16 | int8
     vocabulary: list[str] = field(default_factory=list)
+    # File-transcription feature
+    hf_token: str = ""  # HuggingFace token for pyannote speaker diarization
+    file_diarize: bool = True  # default: identify speakers when transcribing files
+    file_last_dir: str = ""  # remembered "open file" directory
 
     @classmethod
     def load(cls) -> "Config":
