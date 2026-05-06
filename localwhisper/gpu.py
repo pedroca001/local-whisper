@@ -141,6 +141,20 @@ def _try_register_cuda_12() -> bool:
             logger.info("cublas64_12.dll found in frozen bundle")
             return True
 
+    # When running from source with a torch+cu1xx wheel installed, CUDA DLLs ship
+    # inside .venv/Lib/site-packages/torch/lib. Register that directory so we
+    # don't need a system-wide CUDA Toolkit install (and don't duplicate DLLs).
+    torch_lib = _find_torch_cuda_lib()
+    if torch_lib is not None:
+        try:
+            os.add_dll_directory(str(torch_lib))
+            logger.info("Registered torch CUDA lib dir: %s", torch_lib)
+        except Exception as exc:
+            logger.debug("add_dll_directory(torch/lib) failed: %s", exc)
+        if _cublas_loadable():
+            logger.info("cublas64_12.dll found in torch wheel")
+            return True
+
     cuda_bin = _find_cuda_12_bin()
     if cuda_bin is None:
         logger.info("CUDA Toolkit 12 not found — GPU acceleration unavailable")
@@ -158,6 +172,18 @@ def _try_register_cuda_12() -> bool:
 
     logger.warning("cublas64_12.dll still not loadable after registering %s", cuda_bin)
     return False
+
+
+def _find_torch_cuda_lib() -> Path | None:
+    """Return torch/lib directory if it contains cublas64_12.dll, else None."""
+    try:
+        import torch
+    except ImportError:
+        return None
+    lib = Path(torch.__file__).parent / "lib"
+    if (lib / "cublas64_12.dll").exists():
+        return lib
+    return None
 
 
 def _cublas_loadable() -> bool:
