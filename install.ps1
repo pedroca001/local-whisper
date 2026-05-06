@@ -1,28 +1,28 @@
 <#
 .SYNOPSIS
-    LocalWhisper — instalador "one-click" a partir do source.
+    LocalWhisper - one-click installer from source.
 
 .DESCRIPTION
-    Idempotente: pode rodar quantas vezes quiser.
-    - Verifica Python 3.10-3.12.
-    - Cria .venv se não existir.
-    - Detecta GPU NVIDIA e instala o PyTorch certo (cu128 / cu121 / CPU).
-    - Instala o app em modo editable + extra "diarize".
-    - Cria atalho no Desktop.
-    - Adiciona à pasta Startup do Windows (toggle com -NoStartup).
+    Idempotent: safe to run multiple times.
+    - Checks for Python 3.10-3.12.
+    - Creates .venv if missing.
+    - Detects NVIDIA GPU and installs the right PyTorch (cu128 / cu121 / CPU).
+    - Installs the app in editable mode plus the "diarize" extra.
+    - Creates a Desktop shortcut.
+    - Adds a shortcut to the Windows Startup folder (skip with -NoStartup).
 
 .PARAMETER NoShortcut
-    Não criar atalho no Desktop.
+    Do not create the Desktop shortcut.
 
 .PARAMETER NoStartup
-    Não adicionar à inicialização do Windows.
+    Do not add to Windows Startup.
 
 .PARAMETER ForceCpu
-    Forçar PyTorch CPU mesmo com GPU NVIDIA presente.
+    Force PyTorch CPU build even if an NVIDIA GPU is present.
 
 .PARAMETER CudaIndex
-    URL do índice do PyTorch (default: auto-detect).
-    Exemplos: https://download.pytorch.org/whl/cu128
+    Custom PyTorch wheel index URL (default: auto-detect).
+    Examples: https://download.pytorch.org/whl/cu128
               https://download.pytorch.org/whl/cu121
               https://download.pytorch.org/whl/cpu
 
@@ -58,7 +58,7 @@ Write-Host "LocalWhisper installer" -ForegroundColor Cyan
 Write-Host "Repo: $Root"
 
 # ---------- 1) Python ----------
-Step "Verificando Python"
+Step "Checking Python"
 $pyExe = $null
 foreach ($cmd in @("py -3.12", "py -3.11", "py -3.10", "python")) {
     try {
@@ -66,43 +66,44 @@ foreach ($cmd in @("py -3.12", "py -3.11", "py -3.10", "python")) {
         $ver = & $parts[0] $parts[1..($parts.Length-1)] -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
         if ($LASTEXITCODE -eq 0 -and $ver -match '^3\.(1[0-2])$') {
             $pyExe = $cmd
-            Info "Encontrado: $cmd ($ver)"
+            Info "Found: $cmd ($ver)"
             break
         }
     } catch {}
 }
 if (-not $pyExe) {
-    Write-Error "Python 3.10-3.12 não encontrado. Instale em https://www.python.org/downloads/ e marque 'Add to PATH'."
+    Write-Error "Python 3.10-3.12 not found. Install from https://www.python.org/downloads/ and check 'Add to PATH'."
     exit 1
 }
 
 # ---------- 2) venv ----------
-Step "Configurando virtualenv (.venv)"
+Step "Setting up virtualenv (.venv)"
 if (-not (Test-Path $VenvPy)) {
-    Info "Criando .venv com $pyExe ..."
+    Info "Creating .venv with $pyExe ..."
     $parts = $pyExe -split ' '
     & $parts[0] $parts[1..($parts.Length-1)] -m venv $Venv
-    if ($LASTEXITCODE -ne 0) { Write-Error "Falhou ao criar venv."; exit 1 }
-    Ok "venv criado."
+    if ($LASTEXITCODE -ne 0) { Write-Error "venv creation failed."; exit 1 }
+    Ok "venv created."
 } else {
-    Ok ".venv já existe."
+    Ok ".venv already exists."
 }
 & $VenvPy -m pip install --quiet --upgrade pip
 
-# ---------- 3) Detectar GPU e escolher torch ----------
-Step "Detectando GPU para escolher PyTorch"
+# ---------- 3) Pick PyTorch index ----------
+Step "Selecting PyTorch build"
 $torchIndex = $CudaIndex
 if (-not $torchIndex) {
     if ($ForceCpu) {
         $torchIndex = "https://download.pytorch.org/whl/cpu"
-        Info "Forçado CPU."
+        Info "Forced CPU build."
     } else {
         $hasNvidia = $false
+        $smi = $null
         try {
             $smi = nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
             if ($LASTEXITCODE -eq 0 -and $smi) {
                 $hasNvidia = $true
-                Info "GPU detectada: $smi"
+                Info "GPU detected: $smi"
             }
         } catch { }
         if ($hasNvidia) {
@@ -113,38 +114,38 @@ if (-not $torchIndex) {
             }
         } else {
             $torchIndex = "https://download.pytorch.org/whl/cpu"
-            Warn "Nenhuma GPU NVIDIA detectada — instalando PyTorch CPU."
+            Warn "No NVIDIA GPU detected - installing CPU PyTorch."
         }
     }
 }
 Info "PyTorch index: $torchIndex"
 
-# ---------- 4) torch (só se faltar) ----------
+# ---------- 4) torch (only if missing) ----------
 $torchInstalled = $false
 & $VenvPy -c "import torch" 2>$null
 if ($LASTEXITCODE -eq 0) {
     $torchInstalled = $true
-    Ok "torch já instalado."
+    Ok "torch already installed."
 }
 if (-not $torchInstalled) {
-    Info "Instalando torch + torchaudio..."
+    Info "Installing torch + torchaudio..."
     & $VenvPy -m pip install --index-url $torchIndex torch torchaudio
-    if ($LASTEXITCODE -ne 0) { Write-Error "Falha ao instalar torch."; exit 1 }
-    Ok "torch instalado."
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to install torch."; exit 1 }
+    Ok "torch installed."
 }
 
 # ---------- 5) App + diarize ----------
-Step "Instalando LocalWhisper (editable) + diarize"
+Step "Installing LocalWhisper (editable) + diarize extra"
 & $VenvPy -m pip install -e "$Root[diarize]"
-if ($LASTEXITCODE -ne 0) { Write-Error "pip install -e .[diarize] falhou."; exit 1 }
-Ok "App + diarização instalados."
+if ($LASTEXITCODE -ne 0) { Write-Error "pip install -e .[diarize] failed."; exit 1 }
+Ok "App + diarization installed."
 
 # ---------- 6) Smoke test ----------
-Step "Smoke test de imports"
+Step "Smoke testing imports"
 & $VenvPy -c "import localwhisper, faster_whisper, PySide6, pyannote.audio; print('imports OK')"
-if ($LASTEXITCODE -ne 0) { Warn "Imports falharam — confira o log acima."; }
+if ($LASTEXITCODE -ne 0) { Warn "Imports failed - check the log above." }
 
-# ---------- 7) Atalhos ----------
+# ---------- 7) Shortcuts ----------
 function New-Shortcut {
     param([string]$Path, [string]$Target, [string]$Args, [string]$WorkDir, [string]$Icon)
     $ws = New-Object -ComObject WScript.Shell
@@ -157,15 +158,15 @@ function New-Shortcut {
 }
 
 if (-not $NoShortcut) {
-    Step "Criando atalho no Desktop"
+    Step "Creating Desktop shortcut"
     $desktop = [Environment]::GetFolderPath('Desktop')
     $lnk = Join-Path $desktop "LocalWhisper.lnk"
     New-Shortcut -Path $lnk -Target $VenvPyw -Args "`"$RunPy`"" -WorkDir $Root -Icon $IconIco
-    Ok "Atalho: $lnk"
+    Ok "Shortcut: $lnk"
 }
 
 if (-not $NoStartup) {
-    Step "Adicionando à inicialização do Windows"
+    Step "Adding to Windows Startup"
     $startup = [Environment]::GetFolderPath('Startup')
     $lnk = Join-Path $startup "LocalWhisper.lnk"
     New-Shortcut -Path $lnk -Target $VenvPyw -Args "`"$RunPy`"" -WorkDir $Root -Icon $IconIco
@@ -173,12 +174,12 @@ if (-not $NoStartup) {
 }
 
 Write-Host ""
-Write-Host "Instalação concluída." -ForegroundColor Green
+Write-Host "Installation complete." -ForegroundColor Green
 Write-Host ""
-Write-Host "Para abrir agora:" -ForegroundColor Cyan
+Write-Host "Run now:" -ForegroundColor Cyan
 Write-Host "    & `"$VenvPyw`" `"$RunPy`""
 Write-Host ""
-Write-Host "Para atualizar no futuro:" -ForegroundColor Cyan
+Write-Host "Update later:" -ForegroundColor Cyan
 Write-Host "    git pull"
-Write-Host "    .\install.ps1   # reaplica deps se mudarem"
+Write-Host "    .\install.ps1   # reapplies deps if pyproject changed"
 Write-Host ""
