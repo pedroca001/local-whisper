@@ -147,11 +147,12 @@ if ($LASTEXITCODE -ne 0) { Warn "Imports failed - check the log above." }
 
 # ---------- 7) Shortcuts ----------
 function New-Shortcut {
-    param([string]$Path, [string]$Target, [string]$Args, [string]$WorkDir, [string]$Icon)
+    # NOTE: $Args is an automatic variable in PowerShell; using $ArgList instead.
+    param([string]$Path, [string]$Target, [string]$ArgList, [string]$WorkDir, [string]$Icon)
     $ws = New-Object -ComObject WScript.Shell
     $sc = $ws.CreateShortcut($Path)
     $sc.TargetPath = $Target
-    $sc.Arguments  = $Args
+    $sc.Arguments  = $ArgList
     $sc.WorkingDirectory = $WorkDir
     if ($Icon -and (Test-Path $Icon)) { $sc.IconLocation = $Icon }
     $sc.Save()
@@ -161,7 +162,7 @@ if (-not $NoShortcut) {
     Step "Creating Desktop shortcut"
     $desktop = [Environment]::GetFolderPath('Desktop')
     $lnk = Join-Path $desktop "LocalWhisper.lnk"
-    New-Shortcut -Path $lnk -Target $VenvPyw -Args "`"$RunPy`"" -WorkDir $Root -Icon $IconIco
+    New-Shortcut -Path $lnk -Target $VenvPyw -ArgList "`"$RunPy`"" -WorkDir $Root -Icon $IconIco
     Ok "Shortcut: $lnk"
 }
 
@@ -169,7 +170,7 @@ if (-not $NoStartup) {
     Step "Adding to Windows Startup"
     $startup = [Environment]::GetFolderPath('Startup')
     $lnk = Join-Path $startup "LocalWhisper.lnk"
-    New-Shortcut -Path $lnk -Target $VenvPyw -Args "`"$RunPy`"" -WorkDir $Root -Icon $IconIco
+    New-Shortcut -Path $lnk -Target $VenvPyw -ArgList "`"$RunPy`"" -WorkDir $Root -Icon $IconIco
     Ok "Startup: $lnk"
 }
 
