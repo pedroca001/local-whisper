@@ -17,40 +17,77 @@ estilo macOS e injeção de texto direto na janela focada.
 - NVIDIA RTX 5070 (ou qualquer GPU NVIDIA com 6GB+; CPU também funciona, mais lento)
 - Driver NVIDIA recente com suporte a CUDA 12.8
 
-## Instalação (rodar do source)
+## Instalação rápida (recomendada)
+
+Pré-requisitos: **Python 3.10–3.12** e **Git** instalados, e (opcional) driver NVIDIA recente.
 
 ```powershell
-# 1) Clone o repo
 git clone https://github.com/pedroca001/local-whisper.git
 cd local-whisper
-
-# 2) Crie um venv (Python 3.10–3.12 recomendado)
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# 3) Instale o PyTorch da sua GPU (Blackwell sm_120 / RTX 50xx precisa de cu128)
-pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio
-
-# 4) Instale o app em modo editable
-pip install -e .
-
-# 5) (Opcional) Diarização — identificação de falantes em arquivos
-pip install -e ".[diarize]"
-
-# 6) (Opcional) Parakeet v3
-pip install -e ".[parakeet]"
+.\install.ps1
 ```
+
+O `install.ps1` é idempotente e faz tudo sozinho:
+
+- Cria `.venv` se não existir.
+- Detecta GPU NVIDIA e instala o PyTorch certo (cu128 pra RTX 50xx, cu121 pra 30xx/40xx, CPU caso não tenha).
+- Instala o app em modo editable + extra `diarize` (identificação de falantes).
+- Cria atalho **LocalWhisper** no Desktop.
+- Adiciona à pasta **Startup** do Windows.
+
+Flags úteis:
+
+```powershell
+.\install.ps1 -NoStartup     # não adicionar na inicialização
+.\install.ps1 -NoShortcut    # não criar atalho no Desktop
+.\install.ps1 -ForceCpu      # forçar PyTorch CPU mesmo com GPU
+.\install.ps1 -CudaIndex https://download.pytorch.org/whl/cu118   # índice manual
+```
+
+> Se o PowerShell bloquear o script, abra um terminal como administrador uma vez e rode
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Ou rode o instalador com
+> `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
 ### Atualizar para a versão mais nova
 
 ```powershell
 cd C:\caminho\para\local-whisper
 git pull
-.\.venv\Scripts\Activate.ps1
-pip install -e .          # reaplica deps caso o pyproject tenha mudado
+.\install.ps1   # reaplica deps caso o pyproject tenha mudado
 ```
 
-Como está em modo `-e` (editable), qualquer `git pull` já refletre no app sem reinstalar.
+Como o app é instalado em modo editable (`pip install -e .`), na maioria dos `git pull`
+basta fechar e reabrir o LocalWhisper — só precisa rerodar o instalador se as
+dependências mudarem.
+
+### Remover atalhos
+
+```powershell
+.\uninstall.ps1
+```
+
+Não apaga o source nem o `.venv` — só os atalhos do Desktop e da inicialização.
+
+### Instalação manual (passo a passo)
+
+Se preferir não usar o script:
+
+```powershell
+git clone https://github.com/pedroca001/local-whisper.git
+cd local-whisper
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# PyTorch — escolha conforme sua GPU:
+pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio   # RTX 50xx
+# pip install --index-url https://download.pytorch.org/whl/cu121 torch torchaudio # RTX 30xx/40xx
+# pip install torch torchaudio                                                    # CPU only
+
+pip install -e ".[diarize]"   # ou só pip install -e . se não quiser diarização
+```
+
+Pra rodar sem janela de console:
+`.\.venv\Scripts\pythonw.exe run.py`
 
 ### Habilitar diarização (opcional)
 
