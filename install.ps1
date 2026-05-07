@@ -121,13 +121,13 @@ if (-not $torchIndex) {
 Info "PyTorch index: $torchIndex"
 
 # ---------- 4) torch (only if missing) ----------
-$torchInstalled = $false
-& $VenvPy -c "import torch" 2>$null
-if ($LASTEXITCODE -eq 0) {
-    $torchInstalled = $true
+# Avoid running the python interpreter just to check — under Windows PowerShell
+# 5.1, native-command stderr redirected with 2>$null gets wrapped as a
+# NativeCommandError and aborts the script under $ErrorActionPreference=Stop.
+$torchPkg = Join-Path $Venv "Lib\site-packages\torch\__init__.py"
+if (Test-Path $torchPkg) {
     Ok "torch already installed."
-}
-if (-not $torchInstalled) {
+} else {
     Info "Installing torch + torchaudio..."
     & $VenvPy -m pip install --index-url $torchIndex torch torchaudio
     if ($LASTEXITCODE -ne 0) { Write-Error "Failed to install torch."; exit 1 }
