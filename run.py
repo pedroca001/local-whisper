@@ -23,12 +23,15 @@ if sys.stdout is None or sys.stderr is None:
 
 # Pystray's _win32 backend does `from six.moves import queue`. PySide6's
 # shibokensupport installs an import hook (feature_imported) that introspects
-# every newly imported module via inspect.getsource(); on some version combos
-# this crashes on six's lazy _SixMetaPathImporter which has no `_path` attr.
-# Pre-loading six.moves.queue here (before PySide6 is imported) caches the
-# module so pystray's later import is a no-op and the hook never fires on it.
+# every imported module; on some version combos it ends up calling
+# _module_repr_from_spec on a six.moves submodule whose loader is a
+# `_SixMetaPathImporter` instance — which has no `_path` attribute. CPython's
+# repr code reads `loader._path` and crashes with AttributeError.
+# Patch the class to expose `_path = None`, which the repr code accepts.
 try:
-    import six.moves.queue  # noqa: F401
+    import six as _six  # noqa: F401
+    if not hasattr(_six._SixMetaPathImporter, "_path"):
+        _six._SixMetaPathImporter._path = None
 except Exception:
     pass
 
