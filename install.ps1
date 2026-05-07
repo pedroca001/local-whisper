@@ -107,11 +107,11 @@ if (-not $torchIndex) {
             }
         } catch { }
         if ($hasNvidia) {
-            if ($smi -match 'RTX\s*50' -or $smi -match 'Blackwell') {
-                $torchIndex = "https://download.pytorch.org/whl/cu128"
-            } else {
-                $torchIndex = "https://download.pytorch.org/whl/cu121"
-            }
+            # cu128 covers torch 2.7+ which is what pyannote.audio requires.
+            # Older NVIDIA cards (RTX 30xx/40xx) work with cu128 too as long
+            # as the user has a recent driver (>= 555). cu121 only goes up to
+            # torch 2.5, so [diarize] would silently upgrade to a CPU build.
+            $torchIndex = "https://download.pytorch.org/whl/cu128"
         } else {
             $torchIndex = "https://download.pytorch.org/whl/cpu"
             Warn "No NVIDIA GPU detected - installing CPU PyTorch."
@@ -139,6 +139,22 @@ Step "Installing LocalWhisper (editable) + diarize extra"
 & $VenvPy -m pip install -e "$Root[diarize]"
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install -e .[diarize] failed."; exit 1 }
 Ok "App + diarization installed."
+
+# pyannote.audio's torch>=2.7 constraint can cause pip to "upgrade" the GPU
+# torch we just installed to a CPU build from the default PyPI index. Detect
+# that (no cublas in torch/lib) and force a clean reinstall from the CUDA
+# index. Skipped when -ForceCpu / -CudaIndex cpu was chosen.
+if (-not ($torchIndex -like "*cpu*")) {
+    $cublas = Join-Path $Venv "Lib\site-packages\torch\lib\cublas64_12.dll"
+    if (-not (Test-Path $cublas)) {
+        Warn "Installed torch is CPU-only; reinstalling from $torchIndex ..."
+        & $VenvPy -m pip install --index-url $torchIndex --force-reinstall --no-deps torch torchaudio
+        if ($LASTEXITCODE -ne 0) { Warn "torch reinstall failed; GPU will not work." }
+        else { Ok "torch reinstalled with GPU support." }
+    } else {
+        Ok "torch GPU build verified (cublas64_12.dll present)."
+    }
+}
 
 # ---------- 6) Smoke test ----------
 Step "Smoke testing imports"
