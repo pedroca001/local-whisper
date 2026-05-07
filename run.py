@@ -21,6 +21,17 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = open(os.path.join(_log_dir, "app.log"), "a", encoding="utf-8", buffering=1)
     sys.stderr = open(os.path.join(_log_dir, "app.log.err"), "a", encoding="utf-8", buffering=1)
 
+# Pystray's _win32 backend does `from six.moves import queue`. PySide6's
+# shibokensupport installs an import hook (feature_imported) that introspects
+# every newly imported module via inspect.getsource(); on some version combos
+# this crashes on six's lazy _SixMetaPathImporter which has no `_path` attr.
+# Pre-loading six.moves.queue here (before PySide6 is imported) caches the
+# module so pystray's later import is a no-op and the hook never fires on it.
+try:
+    import six.moves.queue  # noqa: F401
+except Exception:
+    pass
+
 import numpy as np
 
 from localwhisper.audio import Recorder, SAMPLE_RATE
