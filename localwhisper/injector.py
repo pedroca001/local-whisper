@@ -17,6 +17,8 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
+VK_CONTROL = 0x11
+VK_V = 0x56
 
 ULONG_PTR = ctypes.c_size_t
 
@@ -77,6 +79,19 @@ def _make_unicode_input(code_unit: int, key_up: bool = False) -> INPUT:
     return inp
 
 
+def _make_vk_input(vk: int, key_up: bool = False) -> INPUT:
+    inp = INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.ki = KEYBDINPUT(
+        wVk=vk,
+        wScan=0,
+        dwFlags=KEYEVENTF_KEYUP if key_up else 0,
+        time=0,
+        dwExtraInfo=0,
+    )
+    return inp
+
+
 def type_unicode(text: str, batch: int = 32) -> int:
     """Send `text` to the foreground window as Unicode keystrokes.
 
@@ -102,3 +117,12 @@ def type_unicode(text: str, batch: int = 32) -> int:
         sent_total += n
         i += batch
     return sent_total
+
+
+def paste_clipboard_hotkey() -> int:
+    inputs = (INPUT * 4)()
+    inputs[0] = _make_vk_input(VK_CONTROL, key_up=False)
+    inputs[1] = _make_vk_input(VK_V, key_up=False)
+    inputs[2] = _make_vk_input(VK_V, key_up=True)
+    inputs[3] = _make_vk_input(VK_CONTROL, key_up=True)
+    return int(user32.SendInput(len(inputs), inputs, ctypes.sizeof(INPUT)))

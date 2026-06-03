@@ -31,6 +31,11 @@ MODELS_DIR = _local_appdata_dir() / "models"
 HISTORY_DB = _appdata_dir() / "history.db"
 
 
+def default_models_dir() -> str:
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    return str(MODELS_DIR)
+
+
 @dataclass
 class Config:
     model: str = "whisper-turbo"  # whisper-turbo | parakeet-v3 | whisper-ultra
@@ -49,6 +54,8 @@ class Config:
     compute_device: str = "auto"  # auto | cuda | cpu
     compute_type: str = "float16"  # float32 | float16 | int8_float16 | int8
     vocabulary: list[str] = field(default_factory=list)
+    vocabulary_replacements: list[dict] = field(default_factory=list)
+    models_dir: str = field(default_factory=default_models_dir)
     # File-transcription feature
     hf_token: str = ""  # HuggingFace token for pyannote speaker diarization
     file_diarize: bool = True  # default: identify speakers when transcribing files
@@ -80,6 +87,17 @@ class Config:
         # compute_type: float32 was briefly an option but fails on Blackwell.
         if self.compute_type == "float32":
             self.compute_type = "float16"
+        if not self.models_dir:
+            self.models_dir = default_models_dir()
+        if not self.vocabulary_replacements:
+            vocab = {str(w).strip().lower() for w in self.vocabulary if str(w).strip()}
+            if "claude" in vocab or "claude.md" in vocab:
+                self.vocabulary_replacements = [
+                    {"from": "cloud", "to": "CLAUDE"},
+                    {"from": "cloude", "to": "CLAUDE"},
+                    {"from": "claud", "to": "CLAUDE"},
+                    {"from": "cloud.md", "to": "CLAUDE.md"},
+                ]
 
     def save(self) -> None:
         if CONFIG_PATH.exists():

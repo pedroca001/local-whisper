@@ -6,6 +6,8 @@ from typing import Optional
 
 import numpy as np
 
+from ..audio_gate import looks_like_silence
+from ..vocabulary import apply_replacements
 from .base import OnDeltaFn, TranscriberEngine
 
 PARAKEET_MODEL_ID = "nvidia/parakeet-tdt-0.6b-v3"
@@ -96,7 +98,7 @@ class ParakeetEngine(TranscriberEngine):
     ) -> str:
         if self._model is None:
             self.load()
-        if audio.size == 0:
+        if audio.size == 0 or looks_like_silence(audio):
             return ""
         self._set_language(language)
         audio = np.ascontiguousarray(audio.astype(np.float32))
@@ -113,7 +115,7 @@ class ParakeetEngine(TranscriberEngine):
             return ""
 
         text = self._extract_text(outputs)
-        return text.strip()
+        return apply_replacements(text.strip(), None, vocabulary)
 
     @staticmethod
     def _extract_text(outputs) -> str:
@@ -156,6 +158,8 @@ class ParakeetEngine(TranscriberEngine):
         if self._model is None:
             return
         audio = np.concatenate(self._stream_audio)
+        if looks_like_silence(audio):
+            return
         try:
             outputs = self._model.transcribe([audio], batch_size=1, **getattr(self, "_lang_kwarg", {}))
         except TypeError:
@@ -166,7 +170,7 @@ class ParakeetEngine(TranscriberEngine):
         except Exception:
             return
 
-        text = self._extract_text(outputs).strip()
+        text = apply_replacements(self._extract_text(outputs).strip(), None, getattr(self, "_stream_vocabulary", []))
         if text and text != self._stream_emitted:
             if text.startswith(self._stream_emitted):
                 delta = text[len(self._stream_emitted):]
@@ -183,6 +187,10 @@ class ParakeetEngine(TranscriberEngine):
         if not self._stream_audio:
             return self._stream_emitted
         audio = np.concatenate(self._stream_audio)
+        if looks_like_silence(audio):
+            self._stream_audio = []
+            self._stream_emitted = ""
+            return ""
         text = self.transcribe_full(audio, language=self._stream_lang)
 
         delta = ""

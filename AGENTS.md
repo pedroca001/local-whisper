@@ -21,6 +21,11 @@ Offline dictation app for Windows powered by Whisper / Parakeet on NVIDIA GPUs.
   text with `[Speaker N]` tags.
 - **Models**: `whisper-turbo` (default), `whisper-ultra` (`large-v3`),
   `parakeet-v3` (lazy via NeMo, optional extra).
+- **Model manager**: Settings -> Modes shows installed/not installed status,
+  lets the user choose the models folder, install missing models, and uninstall
+  inactive models.
+- **Vocabulary corrections**: vocabulary prompt bias plus post-transcription
+  replacement rules, useful for terms like `cloud -> CLAUDE`.
 
 ---
 
@@ -229,5 +234,6 @@ $lnk | Format-List Target*, Arguments, WorkingDirectory, IconLocation
 - History DB: `%APPDATA%\LocalWhisper\history.db`
 - Logs: `%LOCALAPPDATA%\LocalWhisper\app.log`, `app.log.err`
 - Whisper model cache: `%LOCALAPPDATA%\LocalWhisper\models`
+- Configurable model cache: `Config.models_dir` (defaults to the path above)
 - HuggingFace cache (pyannote weights ~70 MB): `%USERPROFILE%\.cache\huggingface`
 - User-visible transcripts: `%USERPROFILE%\Documents\LocalWhisper` (configurable)

@@ -5,7 +5,16 @@ import pytest
 if sys.platform != "win32":
     pytest.skip("Windows-only", allow_module_level=True)
 
-from localwhisper.injector import _make_unicode_input, INPUT, KEYBDINPUT, KEYEVENTF_UNICODE, KEYEVENTF_KEYUP
+from localwhisper.injector import (
+    INPUT,
+    KEYBDINPUT,
+    KEYEVENTF_KEYUP,
+    KEYEVENTF_UNICODE,
+    VK_CONTROL,
+    VK_V,
+    _make_unicode_input,
+    _make_vk_input,
+)
 
 
 def _utf16_units(s: str) -> list[int]:
@@ -37,3 +46,12 @@ def test_emoji_surrogate_pair():
     assert len(units) == 2
     assert 0xD800 <= units[0] <= 0xDBFF
     assert 0xDC00 <= units[1] <= 0xDFFF
+
+
+def test_ctrl_v_virtual_key_input():
+    down = _make_vk_input(VK_CONTROL)
+    up = _make_vk_input(VK_V, key_up=True)
+    assert down.ki.wVk == VK_CONTROL
+    assert down.ki.dwFlags == 0
+    assert up.ki.wVk == VK_V
+    assert up.ki.dwFlags & KEYEVENTF_KEYUP

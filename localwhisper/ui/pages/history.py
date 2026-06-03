@@ -77,6 +77,7 @@ class HistoryPage(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.cellClicked.connect(self._show_detail)
         v.addWidget(self.table, stretch=1)
@@ -85,6 +86,7 @@ class HistoryPage(QWidget):
         self.detail.setReadOnly(True)
         self.detail.setMaximumHeight(140)
         self.detail.setPlaceholderText("Select a transcription to view full text.")
+        self.detail.setStyleSheet("QTextEdit { background: #ffffff; color: #1d1d1f; }")
         v.addWidget(self.detail)
 
         actions = QHBoxLayout()

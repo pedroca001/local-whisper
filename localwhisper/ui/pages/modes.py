@@ -1,13 +1,36 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtWidgets import QFileDialog, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from ..widgets.card import Card
 from ..widgets.toggle_switch import ToggleSwitch
 from ...config import Config
 from ...gpu import CUDA_TOOLKIT_URL, get_info as get_gpu_info
+from ...model_manager import install_model, list_model_status, uninstall_model
 from ...transcriber import list_models
+
+
+class _ModelWorker(QObject):
+    finished = Signal()
+    failed = Signal(str)
+
+    def __init__(self, action: str, key: str, models_dir: str, active_key: str):
+        super().__init__()
+        self.action = action
+        self.key = key
+        self.models_dir = models_dir
+        self.active_key = active_key
+
+    def run(self) -> None:
+        try:
+            if self.action == "install":
+                install_model(self.key, self.models_dir)
+            elif self.action == "uninstall":
+                uninstall_model(self.key, self.models_dir, self.active_key)
+            self.finished.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class ModesPage(QWidget):
@@ -77,6 +100,7 @@ class ModesPage(QWidget):
                 break
 
         card.add_row("Voice Model", self.voice_model, sub=self._model_subtitle(cfg.model, gpu))
+        self.model_sub_label = None
 
         self.compute_device = QComboBox()
         self._device_options = {
@@ -112,6 +136,29 @@ class ModesPage(QWidget):
         card.add_row("Precision", self.compute_type, sub="Float16 is the GPU default. Int8 variants are for CPU or very low VRAM.")
         v.addWidget(card)
 
+        card_models = Card()
+        card_models.add_title("Installed models")
+        folder_wrap = QWidget()
+        fw = QHBoxLayout(folder_wrap)
+        fw.setContentsMargins(0, 0, 0, 0)
+        self.models_dir = QLineEdit(cfg.models_dir)
+        self.models_dir.setMinimumWidth(320)
+        browse_models = QPushButton("Browse...")
+        browse_models.clicked.connect(self._pick_models_dir)
+        fw.addWidget(self.models_dir)
+        fw.addWidget(browse_models)
+        card_models.add_row(
+            "Models folder",
+            folder_wrap,
+            sub="Whisper models are downloaded here. Existing cache folders are kept when you change this path.",
+        )
+        self.models_status_wrap = QWidget()
+        self.models_status_layout = QVBoxLayout(self.models_status_wrap)
+        self.models_status_layout.setContentsMargins(18, 8, 18, 14)
+        self.models_status_layout.setSpacing(8)
+        card_models.add_widget(self.models_status_wrap)
+        v.addWidget(card_models)
+
         # Streaming card
         card2 = Card()
         card2.add_title("Streaming")
@@ -130,8 +177,11 @@ class ModesPage(QWidget):
         self.compute_device.currentTextChanged.connect(self._save)
         self.compute_type.currentTextChanged.connect(self._save)
         self.streaming_toggle.toggled_changed.connect(self._save)
+        self.models_dir.editingFinished.connect(self._save_models_dir)
 
-        self._model_sub_label: QLabel | None = None
+        self._model_thread: QThread | None = None
+        self._model_worker: _ModelWorker | None = None
+        self._refresh_model_status()
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -194,4 +244,80 @@ class ModesPage(QWidget):
                 break
         self.cfg.streaming = self.streaming_toggle.isChecked()
         self.cfg.save()
+        self._refresh_model_status()
         self.config_changed.emit()
+
+    def _pick_models_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "Select models folder", self.cfg.models_dir)
+        if d:
+            self.models_dir.setText(d)
+            self._save_models_dir()
+
+    def _save_models_dir(self) -> None:
+        value = self.models_dir.text().strip()
+        if value:
+            self.cfg.models_dir = value
+            self.cfg.save()
+            self._refresh_model_status()
+            self.config_changed.emit()
+
+    def _refresh_model_status(self) -> None:
+        while self.models_status_layout.count():
+            item = self.models_status_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        for status in list_model_status(self.cfg.models_dir, self.cfg.model):
+            row = QWidget()
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(8)
+            label = QLabel(self._status_label(status))
+            label.setWordWrap(True)
+            layout.addWidget(label, stretch=1)
+            install = QPushButton("Install")
+            install.setEnabled(status.installable and not status.installed and self._model_thread is None)
+            install.clicked.connect(lambda _=False, key=status.key: self._run_model_action("install", key))
+            layout.addWidget(install)
+            uninstall = QPushButton("Uninstall")
+            uninstall.setEnabled(status.installed and not status.active and self._model_thread is None)
+            uninstall.clicked.connect(lambda _=False, key=status.key: self._run_model_action("uninstall", key))
+            layout.addWidget(uninstall)
+            self.models_status_layout.addWidget(row)
+        self.models_status_layout.addStretch(1)
+
+    @staticmethod
+    def _status_label(status) -> str:
+        state = "current" if status.active else ("installed" if status.installed else "not installed")
+        extra = f"\n{status.note}" if status.note else ""
+        return f"{status.display_name} - {state}\n{status.cache_path}{extra}"
+
+    def _run_model_action(self, action: str, key: str) -> None:
+        if self._model_thread is not None:
+            return
+        self._model_thread = QThread(self)
+        self._model_worker = _ModelWorker(action, key, self.cfg.models_dir, self.cfg.model)
+        self._model_worker.moveToThread(self._model_thread)
+        self._model_thread.started.connect(self._model_worker.run)
+        self._model_worker.finished.connect(self._model_action_finished)
+        self._model_worker.failed.connect(self._model_action_failed)
+        self._model_worker.finished.connect(self._model_thread.quit)
+        self._model_worker.failed.connect(self._model_thread.quit)
+        self._model_thread.finished.connect(self._cleanup_model_thread)
+        self._refresh_model_status()
+        self._model_thread.start()
+
+    def _model_action_finished(self) -> None:
+        self._refresh_model_status()
+
+    def _model_action_failed(self, message: str) -> None:
+        QMessageBox.warning(self, "Model operation failed", message)
+
+    def _cleanup_model_thread(self) -> None:
+        if self._model_worker is not None:
+            self._model_worker.deleteLater()
+        if self._model_thread is not None:
+            self._model_thread.deleteLater()
+        self._model_worker = None
+        self._model_thread = None
+        self._refresh_model_status()

@@ -56,6 +56,7 @@ class _Worker(QObject):
         hf_token: str,
         min_speakers: Optional[int],
         max_speakers: Optional[int],
+        models_dir: str,
     ):
         super().__init__()
         self.path = path
@@ -65,6 +66,7 @@ class _Worker(QObject):
         self.hf_token = hf_token
         self.min_speakers = min_speakers
         self.max_speakers = max_speakers
+        self.models_dir = models_dir
 
     def run(self) -> None:
         try:
@@ -73,7 +75,7 @@ class _Worker(QObject):
             from ...transcriber.file_transcriber import transcribe_file
 
             self.progress.emit("Loading speech model…", 0.02)
-            engine = get_engine(self.model_key)
+            engine = get_engine(self.model_key, models_dir=self.models_dir)
             engine.load()
 
             result = transcribe_file(
@@ -103,7 +105,7 @@ class TranscribeFilePage(QWidget):
 
         v = QVBoxLayout(self)
         v.setContentsMargins(28, 16, 28, 28)
-        v.setSpacing(14)
+        v.setSpacing(10)
 
         title = QLabel("Transcribe File")
         title.setObjectName("PageTitle")
@@ -121,7 +123,7 @@ class TranscribeFilePage(QWidget):
 
         # ── File picker ────────────────────────────────────────────────
         card1 = Card()
-        card1.add_title("File")
+        card1.add_title("1. Source")
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("No file selected")
         self.path_edit.setReadOnly(True)
@@ -142,7 +144,7 @@ class TranscribeFilePage(QWidget):
 
         # ── Options ────────────────────────────────────────────────────
         card2 = Card()
-        card2.add_title("Options")
+        card2.add_title("2. Options")
 
         # Language
         self._lang_codes = {
@@ -215,7 +217,7 @@ class TranscribeFilePage(QWidget):
 
         # ── Run + progress ─────────────────────────────────────────────
         card3 = Card()
-        card3.add_title("Run")
+        card3.add_title("3. Run")
         self.run_btn = QPushButton("Transcribe")
         self.run_btn.setObjectName("PrimaryButton")
         self.run_btn.clicked.connect(self._start)
@@ -234,7 +236,7 @@ class TranscribeFilePage(QWidget):
         card3.add_widget(run_row)
 
         self.status_lbl = QLabel("Pick a file to get started.")
-        self.status_lbl.setStyleSheet("color: #6e6e73; padding: 4px 18px;")
+        self.status_lbl.setStyleSheet("color: #3a3a3c; background: #f5f5f7; border-radius: 6px; padding: 8px 10px;")
         self.status_lbl.setWordWrap(True)
         self.progress = QProgressBar()
         self.progress.setRange(0, 1000)
@@ -252,12 +254,17 @@ class TranscribeFilePage(QWidget):
 
         # ── Result ─────────────────────────────────────────────────────
         card4 = Card()
-        card4.add_title("Transcript")
+        card4.add_title("4. Transcript")
 
         self.result_view = QTextEdit()
         self.result_view.setReadOnly(True)
-        self.result_view.setMinimumHeight(220)
+        self.result_view.setMinimumHeight(260)
         self.result_view.setPlaceholderText("Your transcript will appear here.")
+        self.result_view.setStyleSheet(
+            "QTextEdit { background: #ffffff; color: #111113; border: 1px solid #d2d2d7;"
+            "border-radius: 8px; padding: 10px; selection-background-color: #007aff;"
+            "selection-color: #ffffff; }"
+        )
         mono = QFont("Consolas")
         mono.setStyleHint(QFont.StyleHint.TypeWriter)
         self.result_view.setFont(mono)
@@ -352,6 +359,7 @@ class TranscribeFilePage(QWidget):
             hf_token=self.cfg.hf_token,
             min_speakers=min_spk,
             max_speakers=max_spk,
+            models_dir=self.cfg.models_dir,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)

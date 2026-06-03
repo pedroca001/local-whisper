@@ -101,6 +101,18 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     selection-color: white;
     min-height: 22px;
 }
+QTextEdit, QPlainTextEdit {
+    background: #ffffff;
+    color: #1d1d1f;
+    border: 1px solid #d2d2d7;
+    border-radius: 8px;
+    padding: 8px;
+    selection-background-color: #007aff;
+    selection-color: #ffffff;
+}
+QTextEdit:focus, QPlainTextEdit:focus {
+    border: 1px solid #007aff;
+}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
     border: 1px solid #007aff;
 }
@@ -160,6 +172,14 @@ QTableView, QTableWidget {
     gridline-color: #f0f0f3;
     selection-background-color: #007aff;
     selection-color: white;
+}
+QTableView::item, QTableWidget::item {
+    color: #1d1d1f;
+    padding: 6px 8px;
+}
+QTableView::item:selected, QTableWidget::item:selected {
+    background: #007aff;
+    color: #ffffff;
 }
 QHeaderView::section {
     background: #fafafc;

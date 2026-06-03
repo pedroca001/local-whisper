@@ -8,6 +8,8 @@ from typing import Optional
 import numpy as np
 
 from ..config import MODELS_DIR
+from ..audio_gate import looks_like_silence
+from ..vocabulary import apply_replacements
 from .base import OnDeltaFn, TranscriberEngine
 
 
@@ -19,10 +21,12 @@ class FasterWhisperEngine(TranscriberEngine):
         model_name: str = "large-v3-turbo",
         compute_type: str = "float16",
         compute_device: str = "auto",
+        models_dir: str | None = None,
     ):
         self.model_name = model_name
         self.compute_type = compute_type
         self.compute_device = compute_device if compute_device in ("auto", "cuda", "cpu") else "auto"
+        self.models_dir = models_dir or str(MODELS_DIR)
         self._model = None
         self._lock = threading.Lock()
 
@@ -62,7 +66,7 @@ class FasterWhisperEngine(TranscriberEngine):
                         self.model_name,
                         device="cuda",
                         compute_type=self.compute_type,
-                        download_root=str(MODELS_DIR),
+                        download_root=self.models_dir,
                     )
                     self._device = "cuda"
                 # Force CUDA lazy-init NOW — ctranslate2 only loads cuBLAS on the
@@ -86,7 +90,7 @@ class FasterWhisperEngine(TranscriberEngine):
                 self.model_name,
                 device="cpu",
                 compute_type="int8",
-                download_root=str(MODELS_DIR),
+                download_root=self.models_dir,
             )
             self._device = "cpu"
         logging.info("WhisperModel loaded on CPU with compute_type=int8")
@@ -164,7 +168,7 @@ class FasterWhisperEngine(TranscriberEngine):
         if self._model is None:
             self.load()
         audio = np.ascontiguousarray(audio.astype(np.float32))
-        if audio.size == 0:
+        if audio.size == 0 or looks_like_silence(audio):
             return ""
         from .language import resolve
 
@@ -201,7 +205,7 @@ class FasterWhisperEngine(TranscriberEngine):
                         self.model_name,
                         device="cpu",
                         compute_type="int8",
-                        download_root=str(MODELS_DIR),
+                        download_root=self.models_dir,
                     )
                     self._device = "cpu"
                 segments, info = self._model.transcribe(audio, **kwargs)
@@ -228,7 +232,7 @@ class FasterWhisperEngine(TranscriberEngine):
             logging.info("VAD produced empty transcription; retrying without VAD")
             segments, _info = self._model.transcribe(audio, **retry_kwargs)
             text = "".join(seg.text for seg in segments).strip()
-        return text
+        return apply_replacements(text, None, vocabulary)
 
     # ---- Streaming ----
     def start_stream(
@@ -262,6 +266,8 @@ class FasterWhisperEngine(TranscriberEngine):
         if self._model is None:
             return
         audio = np.concatenate(self._stream_audio)
+        if looks_like_silence(audio):
+            return
         kwargs = {
             "language": self._stream_whisper_lang,
             "beam_size": 1,
@@ -289,6 +295,8 @@ class FasterWhisperEngine(TranscriberEngine):
             except Exception:
                 pass
 
+        text = apply_replacements(text, None, self._stream_vocabulary)
+
         if text and text != self._stream_emitted:
             # Emit only the new suffix
             if text.startswith(self._stream_emitted):
@@ -307,6 +315,10 @@ class FasterWhisperEngine(TranscriberEngine):
         if not self._stream_audio:
             return self._stream_emitted
         audio = np.concatenate(self._stream_audio)
+        if looks_like_silence(audio):
+            self._stream_audio = []
+            self._stream_emitted = ""
+            return ""
         kwargs = {
             "language": self._stream_whisper_lang,
             "beam_size": 5,
@@ -338,7 +350,7 @@ class FasterWhisperEngine(TranscriberEngine):
                         final = retry_final
                 except Exception:
                     pass
-        if not final and kwargs.get("vad_filter") and audio.size > 0:
+        if not final and kwargs.get("vad_filter") and audio.size > 0 and not looks_like_silence(audio):
             retry_kwargs = dict(kwargs)
             retry_kwargs["vad_filter"] = False
             logging.info("Streaming VAD produced empty transcription; retrying without VAD")
@@ -361,4 +373,4 @@ class FasterWhisperEngine(TranscriberEngine):
 
         self._stream_audio = []
         self._stream_emitted = ""
-        return final
+        return apply_replacements(final, None, self._stream_vocabulary)

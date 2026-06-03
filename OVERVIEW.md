@@ -39,6 +39,8 @@ LocalWhisper é um **aplicativo de ditado offline para Windows** que transcreve 
 | **Transcrição de arquivo** | Suporta mp3, mp4, wav, mkv e outros formatos de vídeo/áudio |
 | **Identificação de falantes** | Via pyannote.audio — etiqueta `[Speaker N]` no texto |
 | **Inicialização automática** | Pode ser configurado para iniciar com o Windows |
+| **Gerenciador de modelos** | Instala/desinstala modelos e permite escolher a pasta de cache |
+| **Correções de vocabulário** | Regras locais para corrigir termos técnicos após a transcrição |
 
 ### Páginas da interface de configurações
 
@@ -155,6 +157,7 @@ Get-Content "$env:LOCALAPPDATA\LocalWhisper\app.log.err" -Tail 80
 | `%LOCALAPPDATA%\LocalWhisper\app.log` | Log principal |
 | `%LOCALAPPDATA%\LocalWhisper\app.log.err` | Log de erros |
 | `%LOCALAPPDATA%\LocalWhisper\models` | Cache dos modelos Whisper |
+| `Config.models_dir` | Pasta configurável para instalação/cache dos modelos |
 | `%USERPROFILE%\.cache\huggingface` | Pesos do pyannote (~70 MB) |
 | `%USERPROFILE%\Documents\LocalWhisper` | Transcrições visíveis ao usuário (configurável) |
 

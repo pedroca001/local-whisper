@@ -16,7 +16,9 @@ from .audio import Recorder, list_input_devices
 from .config import Config
 from .focus import activate_window, get_focus_info
 from .hotkey import HotkeyManager
-from .injector import type_unicode
+from .injector import paste_clipboard_hotkey, type_unicode
+from .audio_gate import analyze_audio_activity
+from .vocabulary import apply_replacements
 from .assets import app_icon_paths
 from .transcriber import get_engine
 from .tray import TrayIcon
@@ -55,7 +57,7 @@ class RecordingController(QObject):
         return self._is_recording
 
     def ensure_engine(self) -> None:
-        engine_key = f"{self.cfg.model}|{self.cfg.compute_device}|{self.cfg.compute_type}"
+        engine_key = f"{self.cfg.model}|{self.cfg.compute_device}|{self.cfg.compute_type}|{self.cfg.models_dir}"
         if self._engine is not None and self._engine_key == engine_key:
             return
         if self._engine is not None:
@@ -71,7 +73,7 @@ class RecordingController(QObject):
             self.cfg.compute_device,
             self.cfg.compute_type,
         )
-        self._engine = get_engine(self.cfg.model, self.cfg.compute_device, self.cfg.compute_type)
+        self._engine = get_engine(self.cfg.model, self.cfg.compute_device, self.cfg.compute_type, self.cfg.models_dir)
         self._engine.load()
         self._engine_key = engine_key
         logging.info("ASR engine loaded: %s", getattr(self._engine, "display_name", self.cfg.model))
@@ -231,6 +233,18 @@ class RecordingController(QObject):
         ).start()
 
     def _finalize_in_background(self, audio: np.ndarray, duration_ms: int) -> None:
+        activity = analyze_audio_activity(audio)
+        if not activity.has_voice:
+            logging.info(
+                "Skipping transcription for silent audio: duration=%.2fs rms=%.5f peak=%.5f voiced_ratio=%.4f",
+                activity.duration_s,
+                activity.rms,
+                activity.peak,
+                activity.voiced_ratio,
+            )
+            self.finalized.emit("", duration_ms)
+            return
+
         try:
             if self.cfg.streaming:
                 final_text = self._engine.finalize_stream()
@@ -246,24 +260,14 @@ class RecordingController(QObject):
             self.error_occurred.emit("Transcription failed", str(e))
             final_text = ""
 
-        text = (final_text or "").strip()
+        text = apply_replacements(
+            (final_text or "").strip(),
+            self.cfg.vocabulary_replacements,
+            self.cfg.vocabulary,
+        ).strip()
         # In final-dump mode (or when streaming yielded nothing), emit the text now.
         if not self.cfg.streaming and text:
             self.delta_ready.emit(text)
-
-        # Save to history
-        try:
-            storage.add_transcription(
-                text=text,
-                duration_ms=duration_ms,
-                model=self.cfg.model,
-                target_app=self._target_app,
-                target_window_title=self._target_title,
-                injected=self._injecting,
-                save_dir=self.cfg.save_dir,
-            )
-        except Exception as e:
-            logging.exception("Save failed")
 
         self.finalized.emit(text, duration_ms)
 
@@ -273,6 +277,14 @@ class RecordingController(QObject):
     @property
     def target_hwnd(self) -> int:
         return self._target_hwnd
+
+    @property
+    def target_app(self) -> Optional[str]:
+        return self._target_app
+
+    @property
+    def target_title(self) -> Optional[str]:
+        return self._target_title
 
 
 class App(QObject):
@@ -405,8 +417,14 @@ class App(QObject):
         if self.controller.can_inject_now():
             try:
                 activate_window(self.controller.target_hwnd)
-                sent = type_unicode(delta)
-                self._last_text_injected = sent > 0
+                sent = 0
+                use_clipboard = self._target_prefers_clipboard()
+                if not use_clipboard:
+                    sent = type_unicode(delta)
+                if use_clipboard or sent <= 0:
+                    sent = self._paste_via_clipboard(delta)
+                injected = sent > 0
+                self._last_text_injected = self._last_text_injected or injected
                 logging.info(
                     "Injected text into captured target: chars=%s hwnd=%s sent=%s",
                     len(delta),
@@ -421,8 +439,57 @@ class App(QObject):
             self._last_text_injected = False
             logging.info("No injectable target was captured; will show overlay on finalize")
 
+    def _target_prefers_clipboard(self) -> bool:
+        app = (self.controller._target_app or "").lower()
+        title = (self.controller._target_title or "").lower()
+        return any(
+            marker in app or marker in title
+            for marker in (
+                "code.exe",
+                "windowsterminal.exe",
+                "wt.exe",
+                "terminal",
+                "powershell",
+                "cmd.exe",
+                "chrome.exe",
+                "msedge.exe",
+                "electron",
+            )
+        )
+
+    def _paste_via_clipboard(self, text: str) -> int:
+        clipboard = QApplication.clipboard()
+        previous = clipboard.text()
+        clipboard.setText(text)
+        activate_window(self.controller.target_hwnd)
+        time.sleep(0.06)
+        sent = paste_clipboard_hotkey()
+
+        def restore_clipboard() -> None:
+            try:
+                if clipboard.text() == text:
+                    clipboard.setText(previous)
+            except Exception:
+                pass
+
+        QTimer.singleShot(450, restore_clipboard)
+        return sent
+
     def _on_finalized(self, text: str, duration_ms: int) -> None:
         logging.info("Finalized transcription: duration_ms=%s chars=%s", duration_ms, len(text or ""))
+        if text:
+            try:
+                storage.add_transcription(
+                    text=text,
+                    duration_ms=duration_ms,
+                    model=self.cfg.model,
+                    target_app=self.controller.target_app,
+                    target_window_title=self.controller.target_title,
+                    injected=self._last_text_injected,
+                    save_dir=self.cfg.save_dir,
+                )
+            except Exception:
+                logging.exception("Save failed")
         # Only show overlay if injection failed or was never attempted.
         # Injection success is tracked across all deltas in self._last_text_injected.
         if text and not self._last_text_injected:

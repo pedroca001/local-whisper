@@ -9,6 +9,8 @@ estilo macOS e injeção de texto direto na janela focada.
 - **System tray** com menu Settings / Record manually / Quit
 - **History** dos últimos 7 dias com busca, espelhado em arquivos `.txt` por dia
 - **Transcribe File**: transcreve arquivos de áudio/vídeo (mp3, mp4, wav, mkv...) com identificação de falantes (diarização) via pyannote
+- **Model manager**: instala/desinstala modelos e permite escolher a pasta de cache
+- **Correções de vocabulário**: regras locais do tipo `cloud -> CLAUDE`
 
 ## Requisitos
 
@@ -133,6 +135,7 @@ python -c "from faster_whisper import WhisperModel; m = WhisperModel('large-v3-t
 - Config: `%APPDATA%\LocalWhisper\config.json`
 - Histórico (SQLite): `%APPDATA%\LocalWhisper\history.db`
 - Modelos baixados: `%LOCALAPPDATA%\LocalWhisper\models`
+- Pasta de modelos configurável: **Settings → Modes → Installed models**
 - Transcrições `.txt`: pasta configurável em **Settings → Configuration → Save folder**
   (default: `%USERPROFILE%\Documents\LocalWhisper`)
 
@@ -142,9 +145,14 @@ python -c "from faster_whisper import WhisperModel; m = WhisperModel('large-v3-t
 2. O áudio do microfone selecionado começa a ser capturado (`sounddevice`, 16kHz mono).
 3. Se o foco está em um campo de texto, o texto vai sendo digitado lá via `SendInput`
    com `KEYEVENTF_UNICODE` (acentos PT-BR funcionam corretamente).
+   Em alvos modernos como VS Code, terminal e apps Electron/Chromium, o app pode usar
+   fallback de clipboard + `Ctrl+V` e restaurar o clipboard depois.
 4. Se o foco está no Desktop / Taskbar, um overlay preto aparece no topo central
    mostrando que está gravando. O texto vai para o histórico.
 5. `Ctrl+Space` de novo → o engine finaliza e (em final-dump mode) injeta o resultado.
+
+Gravações silenciosas são descartadas antes de chamar o modelo, evitando frases
+inventadas como "E aí" quando o microfone capturou pouco ou nenhum áudio.
 
 ## Empacotamento (.exe)
 

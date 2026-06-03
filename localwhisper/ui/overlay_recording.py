@@ -134,8 +134,15 @@ class RecordingOverlay(QWidget):
         text = self.result_text.toPlainText()
         if text:
             QApplication.clipboard().setText(text)
+        self.dismiss_result()
+
+    def dismiss_result(self) -> None:
+        self._opacity_anim.stop()
+        self._disconnect_anim_finished()
+        self.result_text.clear()
         self._mode = "recording"
         self.hide()
+        self.setWindowOpacity(1.0)
 
     def _set_recording_flags(self) -> None:
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -233,7 +240,7 @@ class RecordingOverlay(QWidget):
 
     def fade_out_and_hide(self) -> None:
         if self._mode == "result":
-            self.hide()
+            self.dismiss_result()
             return
         self._opacity_anim.stop()
         self._disconnect_anim_finished()
