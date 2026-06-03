@@ -6,7 +6,7 @@ written in the desired variant. The prompt nudges punctuation, vocabulary
 ('você' vs 'tu'), and contractions ('tô' vs 'estou') in that direction.
 
 Returns: (whisper_language_or_None, initial_prompt_or_None)
-- 'auto' -> (None, None) — Whisper auto-detects the language
+- 'auto' -> (None, None) — Whisper auto-detects the language genuinely
 - 'pt-BR' -> ('pt', BR-flavored prompt)
 - 'pt-PT' -> ('pt', PT-flavored prompt)
 - 'en' / 'es' / etc -> (code, None)
@@ -16,7 +16,9 @@ from __future__ import annotations
 PT_BR_PROMPT = (
     "Olá, tudo bem? A gente precisa terminar essa apresentação. "
     "Você consegue revisar o texto e enviar pro time até amanhã de manhã? "
-    "Tô achando que ficou ótimo, mas dá uma olhada nas duas últimas páginas."
+    "Tô achando que ficou ótimo, mas dá uma olhada nas duas últimas páginas. "
+    "Quando aparecerem termos em inglês no meio do português, mantenha os termos "
+    "em inglês como foram falados."
 )
 
 PT_PT_PROMPT = (

@@ -43,20 +43,17 @@ class ModesPage(QWidget):
         self.preset.addItems(["Voice", "Email", "Chat"])
         card.add_row("Preset", self.preset, sub="Tunes punctuation and formatting style.")
 
-        # Language
+        # Language — locked to PT-BR or EN. PT-BR keeps Whisper anchored to
+        # Portuguese (no Japanese/Spanish hallucinations on silence) while the
+        # bilingual prompt biases it to keep English terms spoken in the middle
+        # of Portuguese sentences as English words.
         self._lang_codes = {
-            "Multilingual (auto-detect)": "auto",
-            "Portuguese (Brazil)":        "pt-BR",
-            "Portuguese (Portugal)":      "pt-PT",
-            "English":                    "en",
-            "Spanish":                    "es",
-            "French":                     "fr",
-            "German":                     "de",
-            "Italian":                    "it",
+            "Portuguese (Brazil) + English terms": "pt-BR",
+            "English":                              "en",
         }
         self.language = QComboBox()
         self.language.addItems(list(self._lang_codes.keys()))
-        wanted = "pt-BR" if cfg.language == "pt" else cfg.language
+        wanted = cfg.language if cfg.language in {"pt-BR", "en"} else "pt-BR"
         for label, code in self._lang_codes.items():
             if code == wanted:
                 self.language.setCurrentText(label)
@@ -65,7 +62,7 @@ class ModesPage(QWidget):
         card.add_row(
             "Language",
             self.language,
-            sub="'Multilingual' detects the spoken language automatically — ideal if you mix languages in the same dictation.",
+            sub="Portuguese (Brazil) is locked to PT-BR but keeps English words spoken mid-sentence as English. Pick English only if dictating fully in English.",
         )
 
         # Voice model — label each entry with GPU/CPU indicator
@@ -80,6 +77,39 @@ class ModesPage(QWidget):
                 break
 
         card.add_row("Voice Model", self.voice_model, sub=self._model_subtitle(cfg.model, gpu))
+
+        self.compute_device = QComboBox()
+        self._device_options = {
+            "Auto (GPU if available)": "auto",
+            "CUDA GPU": "cuda",
+            "CPU": "cpu",
+        }
+        self.compute_device.addItems(list(self._device_options.keys()))
+        for label, value in self._device_options.items():
+            if value == getattr(cfg, "compute_device", "auto"):
+                self.compute_device.setCurrentText(label)
+                break
+        card.add_row(
+            "Run on",
+            self.compute_device,
+            sub="Auto uses CUDA on NVIDIA GPUs when the CUDA runtime is available, then falls back to CPU.",
+        )
+
+        self.compute_type = QComboBox()
+        self._compute_options = {
+            "Float16 (fast GPU)":         "float16",
+            "Int8 Float16 (lighter GPU)": "int8_float16",
+            "Int8 (CPU / low VRAM)":      "int8",
+        }
+        self.compute_type.addItems(list(self._compute_options.keys()))
+        legacy_compute = getattr(cfg, "compute_type", "float16")
+        if legacy_compute == "float32":
+            legacy_compute = "float16"
+        for label, value in self._compute_options.items():
+            if value == legacy_compute:
+                self.compute_type.setCurrentText(label)
+                break
+        card.add_row("Precision", self.compute_type, sub="Float16 is the GPU default. Int8 variants are for CPU or very low VRAM.")
         v.addWidget(card)
 
         # Streaming card
@@ -97,6 +127,8 @@ class ModesPage(QWidget):
         self.preset.currentTextChanged.connect(self._save)
         self.language.currentTextChanged.connect(self._save)
         self.voice_model.currentIndexChanged.connect(self._model_changed)
+        self.compute_device.currentTextChanged.connect(self._save)
+        self.compute_type.currentTextChanged.connect(self._save)
         self.streaming_toggle.toggled_changed.connect(self._save)
 
         self._model_sub_label: QLabel | None = None
@@ -152,6 +184,14 @@ class ModesPage(QWidget):
         key = self.voice_model.currentData()
         if key:
             self.cfg.model = key
+        for label, value in self._device_options.items():
+            if self.compute_device.currentText() == label:
+                self.cfg.compute_device = value
+                break
+        for label, value in self._compute_options.items():
+            if self.compute_type.currentText() == label:
+                self.cfg.compute_type = value
+                break
         self.cfg.streaming = self.streaming_toggle.isChecked()
         self.cfg.save()
         self.config_changed.emit()

@@ -34,7 +34,7 @@ HISTORY_DB = _appdata_dir() / "history.db"
 @dataclass
 class Config:
     model: str = "whisper-turbo"  # whisper-turbo | parakeet-v3 | whisper-ultra
-    language: str = "pt-BR"  # pt-BR | pt-PT | en | es | fr | de | it | auto
+    language: str = "pt-BR"  # pt-BR | en | auto  (legacy values fall back to 'auto')
     streaming: bool = True  # True = live streaming injection, False = inject after stop
     hotkey_toggle: str = "ctrl+space"
     hotkey_cancel: str = "esc"
@@ -46,7 +46,8 @@ class Config:
     sound_effects: bool = True
     sound_volume: float = 0.8
     auto_launch: bool = False
-    compute_type: str = "float16"  # float16 | int8_float16 | int8
+    compute_device: str = "auto"  # auto | cuda | cpu
+    compute_type: str = "float16"  # float32 | float16 | int8_float16 | int8
     vocabulary: list[str] = field(default_factory=list)
     # File-transcription feature
     hf_token: str = ""  # HuggingFace token for pyannote speaker diarization
@@ -62,6 +63,7 @@ class Config:
                 for k, v in data.items():
                     if hasattr(cfg, k):
                         setattr(cfg, k, v)
+                cfg._migrate_legacy()
                 return cfg
             except Exception:
                 pass
@@ -69,7 +71,23 @@ class Config:
         cfg.save()
         return cfg
 
+    def _migrate_legacy(self) -> None:
+        """Normalize values that came from older app versions."""
+        # Language: only pt-BR and en are supported now. auto/pt-PT/es/fr/de/it
+        # all get mapped to pt-BR (which keeps English terms via prompt bias).
+        if self.language not in {"pt-BR", "en"}:
+            self.language = "pt-BR"
+        # compute_type: float32 was briefly an option but fails on Blackwell.
+        if self.compute_type == "float32":
+            self.compute_type = "float16"
+
     def save(self) -> None:
+        if CONFIG_PATH.exists():
+            try:
+                backup = CONFIG_PATH.with_suffix(".json.bak")
+                backup.write_text(CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+            except Exception:
+                pass
         CONFIG_PATH.write_text(
             json.dumps(asdict(self), indent=2, ensure_ascii=False),
             encoding="utf-8",

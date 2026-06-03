@@ -69,22 +69,24 @@ def _dump_txt(text: str, started_at: str, model: str, target_app: Optional[str],
         fh.write(f"\n[{started_at}] ({model}) -> {target_app or 'overlay'}\n{text.strip()}\n")
 
 
-def list_recent(days: int = 7) -> list[dict]:
+def list_recent(days: int = 7, limit: int = 200) -> list[dict]:
     cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
     with _connect() as c:
         rows = c.execute(
-            "SELECT * FROM transcriptions WHERE started_at >= ? ORDER BY started_at DESC",
-            (cutoff,),
+            "SELECT * FROM transcriptions WHERE started_at >= ? "
+            "ORDER BY started_at DESC LIMIT ?",
+            (cutoff, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
 
-def search(query: str, days: int = 7) -> list[dict]:
+def search(query: str, days: int = 7, limit: int = 200) -> list[dict]:
     cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
     with _connect() as c:
         rows = c.execute(
-            "SELECT * FROM transcriptions WHERE started_at >= ? AND text LIKE ? ORDER BY started_at DESC",
-            (cutoff, f"%{query}%"),
+            "SELECT * FROM transcriptions WHERE started_at >= ? AND text LIKE ? "
+            "ORDER BY started_at DESC LIMIT ?",
+            (cutoff, f"%{query}%", limit),
         ).fetchall()
     return [dict(r) for r in rows]
 

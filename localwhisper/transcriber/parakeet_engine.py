@@ -87,7 +87,13 @@ class ParakeetEngine(TranscriberEngine):
         else:
             self._lang_kwarg = {"source_lang": whisper_lang}
 
-    def transcribe_full(self, audio: np.ndarray, language: str = "pt") -> str:
+    def transcribe_full(
+        self,
+        audio: np.ndarray,
+        language: str = "pt",
+        vad_filter: bool | None = None,
+        vocabulary: list[str] | None = None,
+    ) -> str:
         if self._model is None:
             self.load()
         if audio.size == 0:
@@ -124,8 +130,14 @@ class ParakeetEngine(TranscriberEngine):
         return getattr(first, "text", "") or ""
 
     # ---- Streaming (incremental rewrite of full buffer) ----
-    def start_stream(self, language: str = "pt", on_delta: Optional[OnDeltaFn] = None) -> None:
-        super().start_stream(language=language, on_delta=on_delta)
+    def start_stream(
+        self,
+        language: str = "pt",
+        on_delta: Optional[OnDeltaFn] = None,
+        vad_filter: bool | None = None,
+        vocabulary: list[str] | None = None,
+    ) -> None:
+        super().start_stream(language=language, on_delta=on_delta, vad_filter=vad_filter, vocabulary=vocabulary)
         self._stream_audio = []
         self._stream_emitted = ""
         self._stream_lang = language

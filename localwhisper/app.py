@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from . import diagnostics, sounds, storage
 from .audio import Recorder, list_input_devices
 from .config import Config
-from .focus import can_inject_text, get_focus_info
+from .focus import activate_window, get_focus_info
 from .hotkey import HotkeyManager
 from .injector import type_unicode
 from .assets import app_icon_paths
@@ -42,6 +42,7 @@ class RecordingController(QObject):
         self._recorder: Optional[Recorder] = None
         self._is_recording = False
         self._injecting = False
+        self._target_hwnd: int = 0
         self._target_app: Optional[str] = None
         self._target_title: Optional[str] = None
         self._t_start: float = 0.0
@@ -54,17 +55,25 @@ class RecordingController(QObject):
         return self._is_recording
 
     def ensure_engine(self) -> None:
-        if self._engine is not None and self._engine_key == self.cfg.model:
+        engine_key = f"{self.cfg.model}|{self.cfg.compute_device}|{self.cfg.compute_type}"
+        if self._engine is not None and self._engine_key == engine_key:
             return
         if self._engine is not None:
             try:
                 self._engine.unload()
             except Exception:
                 pass
-        logging.info("Loading ASR engine: model=%s language=%s streaming=%s", self.cfg.model, self.cfg.language, self.cfg.streaming)
-        self._engine = get_engine(self.cfg.model)
+        logging.info(
+            "Loading ASR engine: model=%s language=%s streaming=%s device=%s compute_type=%s",
+            self.cfg.model,
+            self.cfg.language,
+            self.cfg.streaming,
+            self.cfg.compute_device,
+            self.cfg.compute_type,
+        )
+        self._engine = get_engine(self.cfg.model, self.cfg.compute_device, self.cfg.compute_type)
         self._engine.load()
-        self._engine_key = self.cfg.model
+        self._engine_key = engine_key
         logging.info("ASR engine loaded: %s", getattr(self._engine, "display_name", self.cfg.model))
 
     def toggle(self) -> None:
@@ -76,17 +85,12 @@ class RecordingController(QObject):
     def start(self) -> None:
         if self._is_recording:
             return
-        try:
-            self.ensure_engine()
-        except Exception as e:
-            logging.exception("Failed to load model")
-            self.error_occurred.emit("Could not load the speech model", str(e))
-            return
-
         info = get_focus_info()
+        self._target_hwnd = int(info.get("hwnd") or 0)
         self._target_app = info.get("process") or None
         self._target_title = info.get("title") or None
         self._injecting = bool(info.get("can_inject"))
+        logging.info("Recording target captured: %s", info)
 
         device_idx = self._resolve_device()
         self._recorder = Recorder(device=device_idx, on_block=self._on_audio_block)
@@ -100,10 +104,31 @@ class RecordingController(QObject):
         self._is_recording = True
         self.started.emit()
 
-        # Start streaming thread if streaming mode
         self._stream_stop.clear()
+        try:
+            self.ensure_engine()
+        except Exception as e:
+            logging.exception("Failed to load model")
+            if self._recorder:
+                try:
+                    self._recorder.stop()
+                except Exception:
+                    pass
+                self._recorder = None
+            self._is_recording = False
+            self.stopped.emit()
+            self.error_occurred.emit("Could not load the speech model", str(e))
+            return
+
+        # Start streaming thread if streaming mode. The recorder is already
+        # running, so cold model loads cannot eat the first spoken words.
         if self.cfg.streaming:
-            self._engine.start_stream(language=self.cfg.language, on_delta=self._emit_delta)
+            self._engine.start_stream(
+                language=self.cfg.language,
+                on_delta=self._emit_delta,
+                vad_filter=self.cfg.silence_removal,
+                vocabulary=self.cfg.vocabulary,
+            )
             self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
             self._stream_thread.start()
 
@@ -169,6 +194,33 @@ class RecordingController(QObject):
         self._is_recording = False
         self.stopped.emit()
 
+        # Re-check focus right before finalizing. Detection at start can miss
+        # apps where UIA is slow to populate (Electron, freshly-focused fields).
+        # If the user is still on the same hwnd OR a different injectable one,
+        # update the target so injection actually happens.
+        try:
+            current = get_focus_info()
+            same_target = bool(current.get("hwnd")) and int(current.get("hwnd") or 0) == self._target_hwnd
+            if current.get("can_inject") or (same_target and not self._injecting):
+                if current.get("hwnd"):
+                    self._target_hwnd = int(current.get("hwnd") or self._target_hwnd)
+                    self._target_app = current.get("process") or self._target_app
+                    self._target_title = current.get("title") or self._target_title
+                self._injecting = True
+                logging.info(
+                    "Stop: re-checked focus, can_inject=True target=%s hwnd=%s",
+                    self._target_app,
+                    self._target_hwnd,
+                )
+            else:
+                logging.info(
+                    "Stop: re-checked focus, can_inject=%s target=%s",
+                    self._injecting,
+                    current.get("process"),
+                )
+        except Exception:
+            logging.exception("Stop: focus re-check failed")
+
         duration_ms = int((time.time() - self._t_start) * 1000)
 
         # Background finalize so UI doesn't block
@@ -183,7 +235,12 @@ class RecordingController(QObject):
             if self.cfg.streaming:
                 final_text = self._engine.finalize_stream()
             else:
-                final_text = self._engine.transcribe_full(audio, language=self.cfg.language)
+                final_text = self._engine.transcribe_full(
+                    audio,
+                    language=self.cfg.language,
+                    vad_filter=self.cfg.silence_removal,
+                    vocabulary=self.cfg.vocabulary,
+                )
         except Exception as e:
             logging.exception("Transcription failed")
             self.error_occurred.emit("Transcription failed", str(e))
@@ -213,6 +270,10 @@ class RecordingController(QObject):
     def can_inject_now(self) -> bool:
         return self._injecting
 
+    @property
+    def target_hwnd(self) -> int:
+        return self._target_hwnd
+
 
 class App(QObject):
     # Signals used to safely cross from non-Qt threads (pystray, hotkey) into
@@ -220,12 +281,14 @@ class App(QObject):
     # threads do not run, because those threads do not own a Qt event loop.
     show_settings_requested = Signal()
     toggle_recording_requested = Signal()
+    cancel_recording_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, qapp: QApplication, cfg: Config):
         super().__init__()
         self.qapp = qapp
         self.cfg = cfg
+        self._last_text_injected = False
 
         self.controller = RecordingController(cfg)
         self.controller.delta_ready.connect(self._on_delta)
@@ -240,6 +303,7 @@ class App(QObject):
 
         self.overlay = RecordingOverlay()
         self.overlay.update_hotkey(cfg.hotkey_toggle)
+        self.overlay.update_cancel_hotkey(cfg.hotkey_cancel)
         self.overlay.update_device(cfg.input_device or "Default")
 
         self.window = SettingsWindow(cfg)
@@ -251,6 +315,7 @@ class App(QObject):
         # and receiver live in different threads, which is exactly what we need.
         self.show_settings_requested.connect(self._do_show_settings)
         self.toggle_recording_requested.connect(self._do_toggle_recording)
+        self.cancel_recording_requested.connect(self._do_cancel_recording)
         self.quit_requested.connect(self._do_quit)
 
         self.tray = TrayIcon(
@@ -263,6 +328,7 @@ class App(QObject):
         self.hotkey = HotkeyManager(cfg.hotkey_toggle, self.toggle_recording_requested.emit)
         if not self.hotkey.start():
             QTimer.singleShot(500, self._warn_hotkey)
+        self.cancel_hotkey: Optional[HotkeyManager] = None
 
     def _warn_hotkey(self):
         msg = QMessageBox(QMessageBox.Icon.Warning, "Hotkey conflict",
@@ -280,6 +346,7 @@ class App(QObject):
 
     def _on_config_changed(self) -> None:
         self.overlay.update_device(self.cfg.input_device or "Default")
+        self.overlay.update_cancel_hotkey(self.cfg.hotkey_cancel)
         self.controller._engine_key = None  # force engine reload on next start
         sounds.set_output_device(self.cfg.output_device)
         sounds.set_volume(self.cfg.sound_volume)
@@ -287,6 +354,9 @@ class App(QObject):
     # ---- Slots that run on the Qt main thread ----
     def _do_toggle_recording(self) -> None:
         self.controller.toggle()
+
+    def _do_cancel_recording(self) -> None:
+        self.controller.cancel()
 
     def _do_show_settings(self) -> None:
         self.window.show()
@@ -300,6 +370,10 @@ class App(QObject):
         except Exception:
             pass
         try:
+            self._stop_cancel_hotkey()
+        except Exception:
+            pass
+        try:
             self.tray.stop()
         except Exception:
             pass
@@ -309,12 +383,15 @@ class App(QObject):
     def _on_started(self) -> None:
         if self.cfg.sound_effects:
             sounds.play_start()
+        self._last_text_injected = False
         self.tray.set_state("recording")
+        self._start_cancel_hotkey()
         # Always show the overlay so the user has visual confirmation that
         # recording started — even when text is being injected somewhere.
         self.overlay.show_at_top_center()
 
     def _on_stopped(self) -> None:
+        self._stop_cancel_hotkey()
         if self.cfg.sound_effects:
             sounds.play_stop()
         # Audio capture stopped — model is now finalizing the transcription.
@@ -327,19 +404,48 @@ class App(QObject):
     def _on_delta(self, delta: str) -> None:
         if self.controller.can_inject_now():
             try:
-                type_unicode(delta)
+                activate_window(self.controller.target_hwnd)
+                sent = type_unicode(delta)
+                self._last_text_injected = sent > 0
+                logging.info(
+                    "Injected text into captured target: chars=%s hwnd=%s sent=%s",
+                    len(delta),
+                    self.controller.target_hwnd,
+                    sent,
+                )
             except Exception as e:
+                self._last_text_injected = False
                 logging.exception("Text injection failed")
                 self._on_error("Text injection failed", str(e))
+        else:
+            self._last_text_injected = False
+            logging.info("No injectable target was captured; will show overlay on finalize")
 
     def _on_finalized(self, text: str, duration_ms: int) -> None:
         logging.info("Finalized transcription: duration_ms=%s chars=%s", duration_ms, len(text or ""))
+        # Only show overlay if injection failed or was never attempted.
+        # Injection success is tracked across all deltas in self._last_text_injected.
+        if text and not self._last_text_injected:
+            self.overlay.show_result_text(text)
         # Brief "complete" flash on the tray (auto-resets to ready)
         self.tray.flash_complete()
         try:
             self.window.page_history.refresh_async()
         except Exception:
             pass
+
+    def _start_cancel_hotkey(self) -> None:
+        self._stop_cancel_hotkey()
+        self.cancel_hotkey = HotkeyManager(self.cfg.hotkey_cancel, self.cancel_recording_requested.emit)
+        if not self.cancel_hotkey.start():
+            logging.warning("Could not register cancel hotkey %r: %s", self.cfg.hotkey_cancel, self.cancel_hotkey.error)
+
+    def _stop_cancel_hotkey(self) -> None:
+        if self.cancel_hotkey is not None:
+            try:
+                self.cancel_hotkey.stop()
+            finally:
+                self.cancel_hotkey = None
 
     def _on_error(self, title: str, detail: str) -> None:
         logging.error("%s: %s", title, detail)

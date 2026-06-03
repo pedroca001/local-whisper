@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-import time
 from ctypes import wintypes
 
 if sys.platform != "win32":
@@ -103,43 +102,3 @@ def type_unicode(text: str, batch: int = 32) -> int:
         sent_total += n
         i += batch
     return sent_total
-
-
-def paste_clipboard(text: str) -> bool:
-    """Fallback: set clipboard then send Ctrl+V. Useful for very large pastes."""
-    import ctypes
-
-    CF_UNICODETEXT = 13
-    GMEM_MOVEABLE = 0x0002
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    user32_ = ctypes.WinDLL("user32", use_last_error=True)
-
-    if not user32_.OpenClipboard(0):
-        return False
-    try:
-        user32_.EmptyClipboard()
-        data = text.encode("utf-16-le") + b"\x00\x00"
-        h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
-        if not h:
-            return False
-        ptr = kernel32.GlobalLock(h)
-        ctypes.memmove(ptr, data, len(data))
-        kernel32.GlobalUnlock(h)
-        user32_.SetClipboardData(CF_UNICODETEXT, h)
-    finally:
-        user32_.CloseClipboard()
-
-    # Send Ctrl+V
-    VK_CONTROL = 0x11
-    VK_V = 0x56
-    KEYEVENTF_KEYUP_ = 0x0002
-    inputs = (INPUT * 4)()
-    for idx, (vk, up) in enumerate([(VK_CONTROL, False), (VK_V, False), (VK_V, True), (VK_CONTROL, True)]):
-        inp = INPUT()
-        inp.type = INPUT_KEYBOARD
-        inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=(KEYEVENTF_KEYUP_ if up else 0), time=0, dwExtraInfo=0)
-        inputs[idx] = inp
-    user32_.SendInput(4, inputs, ctypes.sizeof(INPUT))
-    time.sleep(0.05)
-    return True

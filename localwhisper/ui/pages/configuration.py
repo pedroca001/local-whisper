@@ -103,9 +103,9 @@ class ConfigurationPage(QWidget):
             sub="Starts and stops recording. If the chosen combination is already in use by another app, the registration will fail and you can pick another.",
         )
 
-        self.cancel_hk = QLineEdit("Esc")
-        self.cancel_hk.setReadOnly(True)
+        self.cancel_hk = HotkeyCapture(cfg.hotkey_cancel)
         self.cancel_hk.setMaximumWidth(180)
+        self.cancel_hk.captured.connect(self._on_cancel_hotkey_captured)
         card.add_row("Cancel recording", self.cancel_hk, sub="Discards the active recording.")
 
         v.addWidget(card)
@@ -162,6 +162,11 @@ class ConfigurationPage(QWidget):
         self.cfg.hotkey_toggle = combo
         self.cfg.save()
         self.hotkey_changed.emit(combo)
+
+    def _on_cancel_hotkey_captured(self, combo: str):
+        self.cfg.hotkey_cancel = combo
+        self.cfg.save()
+        self.config_changed.emit()
 
     def _on_auto_launch(self, on: bool):
         self.cfg.auto_launch = on

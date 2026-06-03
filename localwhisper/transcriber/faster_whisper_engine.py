@@ -14,9 +14,15 @@ from .base import OnDeltaFn, TranscriberEngine
 class FasterWhisperEngine(TranscriberEngine):
     """faster-whisper (CTranslate2) backend for large-v3-turbo and large-v3."""
 
-    def __init__(self, model_name: str = "large-v3-turbo", compute_type: str = "float16"):
+    def __init__(
+        self,
+        model_name: str = "large-v3-turbo",
+        compute_type: str = "float16",
+        compute_device: str = "auto",
+    ):
         self.model_name = model_name
         self.compute_type = compute_type
+        self.compute_device = compute_device if compute_device in ("auto", "cuda", "cpu") else "auto"
         self._model = None
         self._lock = threading.Lock()
 
@@ -36,6 +42,8 @@ class FasterWhisperEngine(TranscriberEngine):
         self._stream_emitted: str = ""
         self._stream_lang: str = "pt"
         self._stream_on_delta: Optional[OnDeltaFn] = None
+        self._stream_vad_filter: bool | None = None
+        self._stream_vocabulary: list[str] = []
         self._stream_min_seconds = 1.5  # transcribe every ~1.5s of accumulated audio
         self._device = "unknown"
 
@@ -47,7 +55,7 @@ class FasterWhisperEngine(TranscriberEngine):
             return
         from faster_whisper import WhisperModel
 
-        if self._cuda_runtime_available():
+        if self.compute_device != "cpu" and self._cuda_runtime_available():
             try:
                 with self._lock:
                     self._model = WhisperModel(
@@ -70,6 +78,8 @@ class FasterWhisperEngine(TranscriberEngine):
                 logging.exception("CUDA WhisperModel failed (load or warm-up); falling back to CPU")
                 self._model = None
                 self._device = "unknown"
+        elif self.compute_device == "cuda":
+            logging.warning("CUDA was requested, but it is not available; falling back to CPU")
 
         with self._lock:
             self._model = WhisperModel(
@@ -80,6 +90,35 @@ class FasterWhisperEngine(TranscriberEngine):
             )
             self._device = "cpu"
         logging.info("WhisperModel loaded on CPU with compute_type=int8")
+
+    @staticmethod
+    def _language_name(info) -> str:
+        return (getattr(info, "language", "") or "").lower()
+
+    @staticmethod
+    def _language_probability(info) -> float:
+        try:
+            return float(getattr(info, "language_probability", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _looks_like_bad_short_auto(language: str, probability: float, audio: np.ndarray) -> bool:
+        duration_s = audio.size / 16000.0
+        if duration_s > 8.0:
+            return False
+        # Short Brazilian Portuguese dictations often get mislabeled as Spanish
+        # or French. Keep genuine English/multilingual use, but retry weak
+        # Romance-language guesses with an explicit Portuguese bias.
+        return language in {"es", "fr", "it"} and probability < 0.85
+
+    @staticmethod
+    def _prompt_with_vocabulary(prompt: str | None, vocabulary: list[str] | None) -> str | None:
+        words = [w.strip() for w in (vocabulary or []) if w and w.strip()]
+        if not words:
+            return prompt
+        vocab_prompt = "Vocabulário personalizado: " + ", ".join(words[:120]) + "."
+        return f"{prompt} {vocab_prompt}" if prompt else vocab_prompt
 
     @staticmethod
     def _cuda_runtime_available() -> bool:
@@ -108,7 +147,20 @@ class FasterWhisperEngine(TranscriberEngine):
         except Exception:
             pass
 
-    def transcribe_full(self, audio: np.ndarray, language: str = "pt-BR") -> str:
+    @staticmethod
+    def _use_vad(audio: np.ndarray, vad_filter: bool | None) -> bool:
+        duration_s = audio.size / 16000.0
+        if vad_filter is None:
+            return duration_s >= 3.0
+        return bool(vad_filter) and duration_s >= 3.0
+
+    def transcribe_full(
+        self,
+        audio: np.ndarray,
+        language: str = "pt-BR",
+        vad_filter: bool | None = None,
+        vocabulary: list[str] | None = None,
+    ) -> str:
         if self._model is None:
             self.load()
         audio = np.ascontiguousarray(audio.astype(np.float32))
@@ -120,13 +172,22 @@ class FasterWhisperEngine(TranscriberEngine):
         kwargs = {
             "language": whisper_lang,
             "beam_size": 5,
-            "vad_filter": True,
-            "vad_parameters": {"min_silence_duration_ms": 500},
+            "vad_filter": self._use_vad(audio, vad_filter),
+            "vad_parameters": {"min_silence_duration_ms": 700},
         }
+        logging.info(
+            "Transcribing audio: duration=%.2fs language=%s whisper_language=%s vad_filter=%s",
+            audio.size / 16000.0,
+            language,
+            whisper_lang or "auto",
+            kwargs["vad_filter"],
+        )
         if initial_prompt:
-            kwargs["initial_prompt"] = initial_prompt
+            kwargs["initial_prompt"] = self._prompt_with_vocabulary(initial_prompt, vocabulary)
+        elif vocabulary:
+            kwargs["initial_prompt"] = self._prompt_with_vocabulary(None, vocabulary)
         try:
-            segments, _info = self._model.transcribe(audio, **kwargs)
+            segments, info = self._model.transcribe(audio, **kwargs)
         except RuntimeError as exc:
             msg = str(exc).lower()
             if self._device == "cuda" and ("cublas" in msg or "cuda" in msg or "cudnn" in msg):
@@ -143,20 +204,50 @@ class FasterWhisperEngine(TranscriberEngine):
                         download_root=str(MODELS_DIR),
                     )
                     self._device = "cpu"
-                segments, _info = self._model.transcribe(audio, **kwargs)
+                segments, info = self._model.transcribe(audio, **kwargs)
             else:
                 raise
-        return "".join(seg.text for seg in segments).strip()
+        text = "".join(seg.text for seg in segments).strip()
+        detected_lang = self._language_name(info)
+        detected_prob = self._language_probability(info)
+        if whisper_lang is None and self._looks_like_bad_short_auto(detected_lang, detected_prob, audio):
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["language"] = "pt"
+            logging.info(
+                "Auto language looked unreliable for short dictation: detected=%s prob=%.2f; retrying as pt-BR",
+                detected_lang,
+                detected_prob,
+            )
+            segments, _info = self._model.transcribe(audio, **retry_kwargs)
+            retry_text = "".join(seg.text for seg in segments).strip()
+            if retry_text:
+                text = retry_text
+        if not text and kwargs.get("vad_filter") and audio.size > 0:
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["vad_filter"] = False
+            logging.info("VAD produced empty transcription; retrying without VAD")
+            segments, _info = self._model.transcribe(audio, **retry_kwargs)
+            text = "".join(seg.text for seg in segments).strip()
+        return text
 
     # ---- Streaming ----
-    def start_stream(self, language: str = "pt-BR", on_delta: Optional[OnDeltaFn] = None) -> None:
-        super().start_stream(language=language, on_delta=on_delta)
+    def start_stream(
+        self,
+        language: str = "pt-BR",
+        on_delta: Optional[OnDeltaFn] = None,
+        vad_filter: bool | None = None,
+        vocabulary: list[str] | None = None,
+    ) -> None:
+        super().start_stream(language=language, on_delta=on_delta, vad_filter=vad_filter, vocabulary=vocabulary)
         from .language import resolve
 
         self._stream_audio = []
         self._stream_emitted = ""
         self._stream_lang = language
+        self._stream_vad_filter = vad_filter
+        self._stream_vocabulary = vocabulary or []
         self._stream_whisper_lang, self._stream_prompt = resolve(language)
+        self._stream_prompt = self._prompt_with_vocabulary(self._stream_prompt, self._stream_vocabulary)
         self._stream_on_delta = on_delta
         if self._model is None:
             self.load()
@@ -174,17 +265,29 @@ class FasterWhisperEngine(TranscriberEngine):
         kwargs = {
             "language": self._stream_whisper_lang,
             "beam_size": 1,
-            "vad_filter": True,
+            "vad_filter": self._use_vad(audio, self._stream_vad_filter),
             "vad_parameters": {"min_silence_duration_ms": 400},
             "condition_on_previous_text": False,
         }
         if self._stream_prompt:
             kwargs["initial_prompt"] = self._stream_prompt
         try:
-            segments, _info = self._model.transcribe(audio, **kwargs)
+            segments, info = self._model.transcribe(audio, **kwargs)
             text = "".join(seg.text for seg in segments).strip()
         except Exception:
             return
+        detected_lang = self._language_name(info)
+        detected_prob = self._language_probability(info)
+        if self._stream_whisper_lang is None and self._looks_like_bad_short_auto(detected_lang, detected_prob, audio):
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["language"] = "pt"
+            try:
+                segments, _info = self._model.transcribe(audio, **retry_kwargs)
+                retry_text = "".join(seg.text for seg in segments).strip()
+                if retry_text:
+                    text = retry_text
+            except Exception:
+                pass
 
         if text and text != self._stream_emitted:
             # Emit only the new suffix
@@ -207,15 +310,43 @@ class FasterWhisperEngine(TranscriberEngine):
         kwargs = {
             "language": self._stream_whisper_lang,
             "beam_size": 5,
-            "vad_filter": True,
+            "vad_filter": self._use_vad(audio, self._stream_vad_filter),
+            "vad_parameters": {"min_silence_duration_ms": 700},
         }
         if self._stream_prompt:
             kwargs["initial_prompt"] = self._stream_prompt
         try:
-            segments, _info = self._model.transcribe(audio, **kwargs)
+            segments, info = self._model.transcribe(audio, **kwargs)
             final = "".join(seg.text for seg in segments).strip()
         except Exception:
             final = self._stream_emitted
+        else:
+            detected_lang = self._language_name(info)
+            detected_prob = self._language_probability(info)
+            if self._stream_whisper_lang is None and self._looks_like_bad_short_auto(detected_lang, detected_prob, audio):
+                retry_kwargs = dict(kwargs)
+                retry_kwargs["language"] = "pt"
+                logging.info(
+                    "Streaming auto language looked unreliable: detected=%s prob=%.2f; retrying as pt-BR",
+                    detected_lang,
+                    detected_prob,
+                )
+                try:
+                    segments, _info = self._model.transcribe(audio, **retry_kwargs)
+                    retry_final = "".join(seg.text for seg in segments).strip()
+                    if retry_final:
+                        final = retry_final
+                except Exception:
+                    pass
+        if not final and kwargs.get("vad_filter") and audio.size > 0:
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["vad_filter"] = False
+            logging.info("Streaming VAD produced empty transcription; retrying without VAD")
+            try:
+                segments, _info = self._model.transcribe(audio, **retry_kwargs)
+                final = "".join(seg.text for seg in segments).strip()
+            except Exception:
+                final = self._stream_emitted
 
         delta = ""
         if final.startswith(self._stream_emitted):

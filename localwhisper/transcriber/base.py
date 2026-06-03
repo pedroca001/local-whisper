@@ -29,13 +29,27 @@ class TranscriberEngine(ABC):
         ...
 
     @abstractmethod
-    def transcribe_full(self, audio: np.ndarray, language: str = "pt") -> str:
+    def transcribe_full(
+        self,
+        audio: np.ndarray,
+        language: str = "pt",
+        vad_filter: bool | None = None,
+        vocabulary: list[str] | None = None,
+    ) -> str:
         """Transcribe a full audio buffer at once. Used for final-dump mode."""
 
-    def start_stream(self, language: str = "pt", on_delta: Optional[OnDeltaFn] = None) -> None:
+    def start_stream(
+        self,
+        language: str = "pt",
+        on_delta: Optional[OnDeltaFn] = None,
+        vad_filter: bool | None = None,
+        vocabulary: list[str] | None = None,
+    ) -> None:
         """Begin a streaming session. Default: no-op (engine that only supports full)."""
         self._stream_lang = language
         self._stream_on_delta = on_delta
+        self._stream_vad_filter = vad_filter
+        self._stream_vocabulary = vocabulary or []
         self._stream_buffer: list[np.ndarray] = []
 
     def push_chunk(self, samples: np.ndarray) -> None:
@@ -50,4 +64,8 @@ class TranscriberEngine(ABC):
             return ""
         audio = np.concatenate(self._stream_buffer)
         self._stream_buffer = []
-        return self.transcribe_full(audio, language=getattr(self, "_stream_lang", "pt"))
+        return self.transcribe_full(
+            audio,
+            language=getattr(self, "_stream_lang", "pt"),
+            vocabulary=getattr(self, "_stream_vocabulary", []),
+        )
