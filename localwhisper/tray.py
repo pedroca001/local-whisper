@@ -1,13 +1,4 @@
-"""System tray icon with state-aware visual feedback.
-
-States:
-    ready       — idle, ready for hotkey
-    recording   — actively capturing audio (red dot)
-    processing  — finalizing transcription (blue dot)
-    complete    — just finished successfully (green dot, ~1s flash)
-
-Auto-detects Windows light/dark taskbar theme so the icon stays visible.
-"""
+"""System tray icon with state-aware visual feedback."""
 from __future__ import annotations
 
 import sys
@@ -20,7 +11,7 @@ from .assets import load_tray_icon
 
 
 def _is_taskbar_dark() -> bool:
-    """Check Windows taskbar theme. Returns True if dark mode (use light icons)."""
+    """Check Windows taskbar theme. Returns True if dark mode."""
     if sys.platform != "win32":
         return True
     try:
@@ -30,11 +21,10 @@ def _is_taskbar_dark() -> bool:
             winreg.HKEY_CURRENT_USER,
             r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
         ) as k:
-            # `SystemUsesLightTheme` controls the taskbar/start menu
             value, _ = winreg.QueryValueEx(k, "SystemUsesLightTheme")
             return value == 0
     except Exception:
-        return True  # default: assume dark taskbar
+        return True
 
 
 class TrayIcon:
@@ -42,10 +32,12 @@ class TrayIcon:
         self,
         on_settings: Callable[[], None],
         on_record: Callable[[], None],
+        on_copy_last: Callable[[], None],
         on_quit: Callable[[], None],
     ):
         self.on_settings = on_settings
         self.on_record = on_record
+        self.on_copy_last = on_copy_last
         self.on_quit = on_quit
         self._icon: Optional[pystray.Icon] = None
         self._thread: Optional[threading.Thread] = None
@@ -61,7 +53,9 @@ class TrayIcon:
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem("Settings…", lambda *_: self.on_settings(), default=True),
+            pystray.MenuItem("Copy last entry", lambda *_: self.on_copy_last(), default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings...", lambda *_: self.on_settings()),
             pystray.MenuItem("Record manually", lambda *_: self.on_record()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", lambda *_: self._quit()),
@@ -84,16 +78,14 @@ class TrayIcon:
         if self._icon:
             try:
                 self._icon.icon = self._states[state]
-                self._icon.title = f"LocalWhisper — {state.capitalize()}"
+                self._icon.title = f"LocalWhisper - {state.capitalize()}"
             except Exception:
                 pass
 
-    # Compat with old API: set_active(True) -> recording, False -> ready
     def set_active(self, active: bool) -> None:
         self.set_state("recording" if active else "ready")
 
     def flash_complete(self, hold_seconds: float = 1.2) -> None:
-        """Show 'complete' briefly then return to 'ready'."""
         self.set_state("complete")
         if self._complete_timer:
             self._complete_timer.cancel()

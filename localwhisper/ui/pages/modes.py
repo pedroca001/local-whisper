@@ -275,8 +275,8 @@ class ModesPage(QWidget):
             label = QLabel(self._status_label(status))
             label.setWordWrap(True)
             layout.addWidget(label, stretch=1)
-            install = QPushButton("Install")
-            install.setEnabled(status.installable and not status.installed and self._model_thread is None)
+            install = QPushButton("Installed" if status.installed else "Install")
+            install.setEnabled(status.installable and not status.installed and not status.active and self._model_thread is None)
             install.clicked.connect(lambda _=False, key=status.key: self._run_model_action("install", key))
             layout.addWidget(install)
             uninstall = QPushButton("Uninstall")
@@ -288,7 +288,12 @@ class ModesPage(QWidget):
 
     @staticmethod
     def _status_label(status) -> str:
-        state = "current" if status.active else ("installed" if status.installed else "not installed")
+        if status.active and status.installed:
+            state = "current + installed"
+        elif status.active:
+            state = "current (selected, install on first use)"
+        else:
+            state = "installed" if status.installed else "not installed"
         extra = f"\n{status.note}" if status.note else ""
         return f"{status.display_name} - {state}\n{status.cache_path}{extra}"
 

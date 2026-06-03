@@ -7,6 +7,7 @@ estilo macOS e injeção de texto direto na janela focada.
 - **Modelos suportados**: Whisper Turbo (`large-v3-turbo`), Parakeet v3 Multilingual, Whisper Ultra (`large-v3`)
 - **Streaming ao vivo** (palavras aparecem conforme você fala) **ou final-dump** (texto inteiro ao parar)
 - **System tray** com menu Settings / Record manually / Quit
+- **Copy last entry no tray**: clique direito no ícone e copie a última transcrição mesmo se o overlay não aparecer
 - **History** dos últimos 7 dias com busca, espelhado em arquivos `.txt` por dia
 - **Transcribe File**: transcreve arquivos de áudio/vídeo (mp3, mp4, wav, mkv...) com identificação de falantes (diarização) via pyannote
 - **Model manager**: instala/desinstala modelos e permite escolher a pasta de cache

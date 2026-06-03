@@ -13,6 +13,8 @@ Offline dictation app for Windows powered by Whisper / Parakeet on NVIDIA GPUs.
   via `SendInput` + `KEYEVENTF_UNICODE` (PT-BR accents work).
 - **Overlay** appears when focus is on Desktop/Taskbar; result goes to history.
 - **System tray** menu: Settings / Record manually / Quit.
+- **Copy last entry** is the first tray menu item and copies the most recent
+  successful transcription to the clipboard.
 - **Settings UI** (PySide6) with pages: Home, Modes, Transcribe File, Vocabulary,
   Configuration, Sound, History.
 - **History** for last 7 days, mirrored as `.txt` files per day.

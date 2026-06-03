@@ -1,6 +1,6 @@
 import os
 import tempfile
-from pathlib import Path
+import uuid
 
 # Override config DB path before import
 tmp = tempfile.mkdtemp(prefix="lw_test_")
@@ -12,7 +12,7 @@ from localwhisper import storage  # noqa: E402
 
 def test_add_and_list():
     storage.add_transcription(
-        text="olá mundo, ação não é coração",
+        text="ola mundo, acao nao e coracao",
         duration_ms=1234,
         model="whisper-turbo",
         target_app="notepad.exe",
@@ -21,16 +21,17 @@ def test_add_and_list():
     )
     rows = storage.list_recent(7)
     assert len(rows) >= 1
-    assert "ação" in rows[0]["text"]
+    assert "acao" in rows[0]["text"]
 
 
 def test_search():
+    token = f"xyzzy-{uuid.uuid4().hex}"
     storage.add_transcription(
-        text="texto único xyzzy presente",
+        text=f"texto unico {token} presente",
         duration_ms=500,
         model="whisper-turbo",
         save_dir=tmp,
     )
-    rows = storage.search("xyzzy", days=7)
+    rows = storage.search(token, days=7)
     assert len(rows) == 1
-    assert "xyzzy" in rows[0]["text"]
+    assert token in rows[0]["text"]

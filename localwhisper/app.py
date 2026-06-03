@@ -294,6 +294,7 @@ class App(QObject):
     show_settings_requested = Signal()
     toggle_recording_requested = Signal()
     cancel_recording_requested = Signal()
+    copy_last_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, qapp: QApplication, cfg: Config):
@@ -301,6 +302,7 @@ class App(QObject):
         self.qapp = qapp
         self.cfg = cfg
         self._last_text_injected = False
+        self._last_entry_text = ""
 
         self.controller = RecordingController(cfg)
         self.controller.delta_ready.connect(self._on_delta)
@@ -328,11 +330,13 @@ class App(QObject):
         self.show_settings_requested.connect(self._do_show_settings)
         self.toggle_recording_requested.connect(self._do_toggle_recording)
         self.cancel_recording_requested.connect(self._do_cancel_recording)
+        self.copy_last_requested.connect(self._do_copy_last)
         self.quit_requested.connect(self._do_quit)
 
         self.tray = TrayIcon(
             on_settings=self.show_settings_requested.emit,
             on_record=self.toggle_recording_requested.emit,
+            on_copy_last=self.copy_last_requested.emit,
             on_quit=self.quit_requested.emit,
         )
         self.tray.start()
@@ -369,6 +373,10 @@ class App(QObject):
 
     def _do_cancel_recording(self) -> None:
         self.controller.cancel()
+
+    def _do_copy_last(self) -> None:
+        if self._last_entry_text:
+            QApplication.clipboard().setText(self._last_entry_text)
 
     def _do_show_settings(self) -> None:
         self.window.show()
@@ -423,7 +431,7 @@ class App(QObject):
                     sent = type_unicode(delta)
                 if use_clipboard or sent <= 0:
                     sent = self._paste_via_clipboard(delta)
-                injected = sent > 0
+                injected = sent > 0 and not use_clipboard
                 self._last_text_injected = self._last_text_injected or injected
                 logging.info(
                     "Injected text into captured target: chars=%s hwnd=%s sent=%s",
@@ -478,6 +486,7 @@ class App(QObject):
     def _on_finalized(self, text: str, duration_ms: int) -> None:
         logging.info("Finalized transcription: duration_ms=%s chars=%s", duration_ms, len(text or ""))
         if text:
+            self._last_entry_text = text
             try:
                 storage.add_transcription(
                     text=text,

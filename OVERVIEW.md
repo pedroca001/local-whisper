@@ -34,6 +34,7 @@ LocalWhisper é um **aplicativo de ditado offline para Windows** que transcreve 
 | **Injeção de texto** | Digita o texto transcrito no campo de texto focado |
 | **Overlay** | Aparece quando não há campo de texto; exibe resultado copiável |
 | **Bandeja do sistema (tray)** | Menu com: Configurações, Gravar manualmente, Sair |
+| **Copiar última entrada** | Primeira opção do tray; copia a última transcrição para o clipboard |
 | **Interface de configurações** | Janela PySide6 com as páginas abaixo |
 | **Histórico** | Últimos 7 dias, espelhado em arquivos `.txt` por dia |
 | **Transcrição de arquivo** | Suporta mp3, mp4, wav, mkv e outros formatos de vídeo/áudio |

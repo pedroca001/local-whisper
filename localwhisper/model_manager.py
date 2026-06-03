@@ -33,6 +33,18 @@ def _model_cache_path(models_dir: str | Path, meta: dict) -> Path:
     return Path(models_dir) / meta.get("cache_subdir", meta["key"])
 
 
+def _has_hf_snapshot(cache_path: Path) -> bool:
+    if not cache_path.exists():
+        return False
+    refs_main = cache_path / "refs" / "main"
+    snapshots = cache_path / "snapshots"
+    if refs_main.exists():
+        return True
+    if snapshots.exists() and any(snapshots.iterdir()):
+        return True
+    return any(cache_path.iterdir())
+
+
 def list_model_status(models_dir: str | Path, active_key: str) -> list[ModelStatus]:
     Path(models_dir).mkdir(parents=True, exist_ok=True)
     statuses: list[ModelStatus] = []
@@ -40,7 +52,9 @@ def list_model_status(models_dir: str | Path, active_key: str) -> list[ModelStat
         cache_path = _model_cache_path(models_dir, meta)
         cache_kind = meta.get("cache_kind", "unknown")
         installable = bool(meta.get("installable", True))
-        installed = cache_path.exists() and any(cache_path.iterdir())
+        installed = _has_hf_snapshot(cache_path) if cache_kind == "huggingface" else cache_path.exists()
+        if meta["key"] == active_key and cache_kind == "huggingface":
+            installed = installed or cache_path.exists()
         note = ""
         if cache_kind == "nemo":
             note = "Requires the optional Parakeet/NeMo dependency; install prepares the model after that dependency exists."

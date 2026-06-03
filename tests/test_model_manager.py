@@ -11,6 +11,15 @@ def test_model_status_reports_active_and_cache_path(tmp_path):
     assert str(tmp_path) in turbo.cache_path
 
 
+def test_hf_snapshot_refs_count_as_installed(tmp_path):
+    cache = Path(tmp_path) / "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo"
+    (cache / "refs").mkdir(parents=True)
+    (cache / "refs" / "main").write_text("abc", encoding="utf-8")
+    statuses = list_model_status(tmp_path, "whisper-ultra")
+    turbo = next(s for s in statuses if s.key == "whisper-turbo")
+    assert turbo.installed
+
+
 def test_uninstall_refuses_active_model(tmp_path):
     try:
         uninstall_model("whisper-turbo", tmp_path, "whisper-turbo")
