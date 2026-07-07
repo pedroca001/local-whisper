@@ -144,10 +144,12 @@ python -c "from faster_whisper import WhisperModel; m = WhisperModel('large-v3-t
 
 1. Você aperta `Ctrl+Space` em qualquer lugar do Windows.
 2. O áudio do microfone selecionado começa a ser capturado (`sounddevice`, 16kHz mono).
-3. Se o foco está em um campo de texto, o texto vai sendo digitado lá via `SendInput`
-   com `KEYEVENTF_UNICODE` (acentos PT-BR funcionam corretamente).
-   Em alvos modernos como VS Code, terminal e apps Electron/Chromium, o app pode usar
-   fallback de clipboard + `Ctrl+V` e restaurar o clipboard depois.
+3. Se o foco está em um campo de texto, o app escolhe a inserção mais limpa:
+   `EM_REPLACESEL` para controles Win32/RichEdit (ex.: Notepad), `SendInput`
+   Unicode como fallback nativo, e clipboard protegido + `Ctrl+V` apenas para
+   alvos modernos como Chromium/Electron/editores web. O clipboard temporário é
+   marcado para não entrar no histórico/cloud clipboard e o clipboard original é
+   restaurado depois.
 4. Se o foco está no Desktop / Taskbar, um overlay preto aparece no topo central
    mostrando que está gravando. O texto vai para o histórico.
 5. `Ctrl+Space` de novo → o engine finaliza e (em final-dump mode) injeta o resultado.

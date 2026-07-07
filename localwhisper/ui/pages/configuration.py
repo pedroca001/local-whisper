@@ -72,6 +72,7 @@ class HotkeyCapture(QLineEdit):
 
 class ConfigurationPage(QWidget):
     hotkey_changed = Signal(str)
+    paste_last_hotkey_changed = Signal(str)
     config_changed = Signal()
 
     def __init__(self, cfg: Config, parent=None):
@@ -107,6 +108,15 @@ class ConfigurationPage(QWidget):
         self.cancel_hk.setMaximumWidth(180)
         self.cancel_hk.captured.connect(self._on_cancel_hotkey_captured)
         card.add_row("Cancel recording", self.cancel_hk, sub="Discards the active recording.")
+
+        self.paste_last_hk = HotkeyCapture(cfg.hotkey_paste_last)
+        self.paste_last_hk.setMaximumWidth(180)
+        self.paste_last_hk.captured.connect(self._on_paste_last_hotkey_captured)
+        card.add_row(
+            "Paste last transcription",
+            self.paste_last_hk,
+            sub="Pastes the most recent transcription into whatever window has focus.",
+        )
 
         v.addWidget(card)
 
@@ -167,6 +177,11 @@ class ConfigurationPage(QWidget):
         self.cfg.hotkey_cancel = combo
         self.cfg.save()
         self.config_changed.emit()
+
+    def _on_paste_last_hotkey_captured(self, combo: str):
+        self.cfg.hotkey_paste_last = combo
+        self.cfg.save()
+        self.paste_last_hotkey_changed.emit(combo)
 
     def _on_auto_launch(self, on: bool):
         self.cfg.auto_launch = on

@@ -20,8 +20,13 @@ LocalWhisper é um **aplicativo de ditado offline para Windows** que transcreve 
 
 ### Injeção de texto
 
-- Usa `SendInput` + `KEYEVENTF_UNICODE` para digitar — suporta acentos do português.
-- Fallback: clipboard + `Ctrl+V` para caixas de texto modernas (Electron, Chromium, editores web).
+- Usa `EM_REPLACESEL` em controles Win32/RichEdit (incluindo Notepad moderno)
+  para inserir no cursor/seleção sem tocar no clipboard.
+- Usa `SendInput` + `KEYEVENTF_UNICODE` como fallback nativo.
+- Usa clipboard protegido + `Ctrl+V` cadenciado apenas em alvos modernos
+  (Chromium/Electron/editores web) que precisam de paste; o conteúdo temporário
+  é marcado para não entrar no histórico/cloud clipboard e o clipboard original
+  é restaurado.
 - Reconhece campos de texto comuns e editores modernos: ProseMirror, Monaco, CodeMirror, Quill, contenteditable.
 
 ---
@@ -76,7 +81,7 @@ localwhisper/
   app.py                        # QApplication, bandeja, ligação do hotkey
   audio.py                      # Gravador sounddevice, SAMPLE_RATE=16000
   hotkey.py                     # Hotkey global via Win32 RegisterHotKey
-  injector.py                   # Digitador via SendInput KEYEVENTF_UNICODE
+  injector.py                   # Inserção Win32 direta + clipboard protegido + Unicode
   focus.py                      # Detecta se a janela focada tem campo de texto
   config.py                     # Config JSON em %APPDATA%\LocalWhisper\config.json
   storage.py                    # Histórico SQLite + espelho .txt

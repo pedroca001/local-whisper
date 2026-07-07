@@ -9,8 +9,11 @@ Briefing for AI coding agents working on this repo. Mirrors `CLAUDE.md`.
 Offline dictation app for Windows powered by Whisper / Parakeet on NVIDIA GPUs.
 
 - **Global hotkey** (default `Ctrl+Space`) starts/stops recording from any window.
-- **Text injection**: when focus is on a text field, transcribed text is typed there
-  via `SendInput` + `KEYEVENTF_UNICODE` (PT-BR accents work).
+- **Text injection**: when focus is on a text field, transcribed text is inserted
+  without clipboard for native edit/RichEdit controls (`EM_REPLACESEL`, e.g.
+  Notepad), then via `SendInput` Unicode fallback, and only uses protected
+  clipboard + paced `Ctrl+V` for browser/Electron-style targets that need paste
+  (PT-BR accents work).
 - **Overlay** appears when focus is on Desktop/Taskbar; result goes to history.
 - **System tray** menu: Settings / Record manually / Quit.
 - **Copy last entry** is the first tray menu item and copies the most recent
@@ -42,7 +45,7 @@ localwhisper/
   app.py                        # QApplication, tray, hotkey wiring
   audio.py                      # sounddevice Recorder, SAMPLE_RATE=16000
   hotkey.py                     # Global hotkey via Win32 RegisterHotKey
-  injector.py                   # SendInput KEYEVENTF_UNICODE typer
+  injector.py                   # Win32 direct insert + protected clipboard + Unicode fallback
   focus.py                      # Detect if focused window has a text field
   config.py                     # JSON config in %APPDATA%\LocalWhisper\config.json
   storage.py                    # SQLite history + .txt mirror

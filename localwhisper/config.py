@@ -43,6 +43,7 @@ class Config:
     streaming: bool = True  # True = live streaming injection, False = inject after stop
     hotkey_toggle: str = "ctrl+space"
     hotkey_cancel: str = "esc"
+    hotkey_paste_last: str = "win+alt+space"
     input_device: str | None = None   # None = system default
     output_device: str | None = None  # None = system default
     save_dir: str = str(_default_save_dir())

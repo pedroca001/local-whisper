@@ -3,16 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -30,19 +29,9 @@ from .pages.transcribe_file import TranscribeFilePage
 from .pages.vocabulary import VocabularyPage
 
 
-def _attach_card_shadows(root: QWidget) -> None:
-    """Walk a tree of widgets and add a soft drop shadow to every QFrame#Card."""
-    for frame in root.findChildren(QFrame):
-        if frame.objectName() == "Card":
-            eff = QGraphicsDropShadowEffect(frame)
-            eff.setBlurRadius(18)
-            eff.setOffset(0, 2)
-            eff.setColor(QColor(0, 0, 0, 22))
-            frame.setGraphicsEffect(eff)
-
-
 class SettingsWindow(QMainWindow):
     hotkey_changed = Signal(str)
+    paste_last_hotkey_changed = Signal(str)
     config_changed = Signal()
     record_now_requested = Signal()
 
@@ -52,7 +41,8 @@ class SettingsWindow(QMainWindow):
         super().__init__(parent)
         self.cfg = cfg
         self.setWindowTitle("LocalWhisper")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(1040, 680)
+        self.resize(1120, 720)
         self.setObjectName("MainWindow")
 
         central = QWidget()
@@ -64,14 +54,32 @@ class SettingsWindow(QMainWindow):
         # ---- Sidebar ----
         side = QFrame()
         side.setObjectName("Sidebar")
-        side.setFixedWidth(210)
+        side.setFixedWidth(244)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(0, 0, 0, 0)
-        sl.setSpacing(0)
+        sl.setContentsMargins(14, 16, 14, 16)
+        sl.setSpacing(12)
 
+        brand = QFrame()
+        brand.setObjectName("Brand")
+        bl = QHBoxLayout(brand)
+        bl.setContentsMargins(2, 0, 2, 8)
+        bl.setSpacing(10)
+        mark = QLabel("LW")
+        mark.setObjectName("BrandMark")
+        mark.setAlignment(Qt.AlignCenter)
+        bl.addWidget(mark)
+        brand_text = QWidget()
+        btl = QVBoxLayout(brand_text)
+        btl.setContentsMargins(0, 0, 0, 0)
+        btl.setSpacing(1)
         header = QLabel("LocalWhisper")
         header.setObjectName("SidebarHeader")
-        sl.addWidget(header)
+        subheader = QLabel("Offline dictation")
+        subheader.setObjectName("SidebarSubheader")
+        btl.addWidget(header)
+        btl.addWidget(subheader)
+        bl.addWidget(brand_text, stretch=1)
+        sl.addWidget(brand)
 
         self.list = QListWidget()
         self.list.setIconSize(QSize(20, 20))
@@ -80,19 +88,37 @@ class SettingsWindow(QMainWindow):
         self.list.setFrameShape(QFrame.Shape.NoFrame)
         self.list.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.list.setUniformItemSizes(True)
+        self.list.setSpacing(4)
         self.list.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
         icons = all_icons()
         for label in self.SIDEBAR_ITEMS:
             item = QListWidgetItem(label)
             if label in icons:
                 item.setIcon(icons[label])
-            item.setSizeHint(QSize(0, 36))
+            item.setSizeHint(QSize(0, 42))
             self.list.addItem(item)
         self.list.setCurrentRow(0)
-        self.list.setFixedHeight(36 * len(self.SIDEBAR_ITEMS) + 16)
+        self.list.setFixedHeight(390)
         self.list.currentRowChanged.connect(self._switch_page)
         sl.addWidget(self.list)
         sl.addStretch(1)
+
+        footer = QFrame()
+        footer.setObjectName("SidebarFooter")
+        fl = QVBoxLayout(footer)
+        fl.setContentsMargins(12, 12, 12, 12)
+        fl.setSpacing(6)
+        self.footer_state = QLabel("Ready")
+        self.footer_state.setObjectName("FooterState")
+        self.footer_model = QLabel("")
+        self.footer_model.setObjectName("FooterMeta")
+        self.footer_hotkey = QLabel("")
+        self.footer_hotkey.setObjectName("FooterMeta")
+        fl.addWidget(self.footer_state)
+        fl.addWidget(self.footer_model)
+        fl.addWidget(self.footer_hotkey)
+        sl.addWidget(footer)
+
         outer.addWidget(side)
 
         # ---- Content ----
@@ -103,6 +129,7 @@ class SettingsWindow(QMainWindow):
         cl.setSpacing(0)
 
         self.stack = QStackedWidget()
+        self.stack.setObjectName("PageStack")
         cl.addWidget(self.stack)
         outer.addWidget(content, stretch=1)
 
@@ -125,15 +152,16 @@ class SettingsWindow(QMainWindow):
             "History": self.page_history,
         }
         for name in self.SIDEBAR_ITEMS:
-            self.stack.addWidget(self._page_by_name[name])
+            self.stack.addWidget(self._scroll_page(self._page_by_name[name]))
 
         self.page_modes.config_changed.connect(self._on_config_changed)
         self.page_config.config_changed.connect(self._on_config_changed)
         self.page_sound.config_changed.connect(self._on_config_changed)
         self.page_config.hotkey_changed.connect(self.hotkey_changed.emit)
+        self.page_config.paste_last_hotkey_changed.connect(self.paste_last_hotkey_changed.emit)
 
         self._apply_qss()
-        _attach_card_shadows(self)
+        self._refresh_sidebar_status()
 
     def _apply_qss(self) -> None:
         qss_path = Path(__file__).parent / "style.qss"
@@ -142,7 +170,18 @@ class SettingsWindow(QMainWindow):
         except Exception:
             pass
 
+    def _scroll_page(self, page: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setObjectName("PageScroll")
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        return scroll
+
     def _switch_page(self, idx: int) -> None:
+        if idx < 0 or idx >= self.stack.count():
+            return
         self.stack.setCurrentIndex(idx)
         name = self.SIDEBAR_ITEMS[idx] if 0 <= idx < len(self.SIDEBAR_ITEMS) else None
         if name == "History":
@@ -152,4 +191,10 @@ class SettingsWindow(QMainWindow):
 
     def _on_config_changed(self) -> None:
         self.page_home.refresh()
+        self._refresh_sidebar_status()
         self.config_changed.emit()
+
+    def _refresh_sidebar_status(self) -> None:
+        hotkey = " + ".join(p.capitalize() for p in self.cfg.hotkey_toggle.split("+") if p)
+        self.footer_model.setText(f"Model: {self.cfg.model}")
+        self.footer_hotkey.setText(f"Hotkey: {hotkey}")

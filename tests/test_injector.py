@@ -6,14 +6,19 @@ if sys.platform != "win32":
     pytest.skip("Windows-only", allow_module_level=True)
 
 from localwhisper.injector import (
+    CF_UNICODETEXT,
     INPUT,
     KEYBDINPUT,
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
     VK_CONTROL,
     VK_V,
+    _dword_clipboard_bytes,
     _make_unicode_input,
     _make_vk_input,
+    _text_to_clipboard_bytes,
+    can_replace_selection_with_message,
+    replace_selection_with_message,
 )
 
 
@@ -55,3 +60,14 @@ def test_ctrl_v_virtual_key_input():
     assert down.ki.dwFlags == 0
     assert up.ki.wVk == VK_V
     assert up.ki.dwFlags & KEYEVENTF_KEYUP
+
+
+def test_protected_clipboard_payload_helpers():
+    assert CF_UNICODETEXT == 13
+    assert _text_to_clipboard_bytes("abc") == b"a\x00b\x00c\x00\x00\x00"
+    assert _dword_clipboard_bytes(0) == b"\x00\x00\x00\x00"
+
+
+def test_win32_message_helpers_reject_missing_hwnd():
+    assert not can_replace_selection_with_message(0)
+    assert not replace_selection_with_message(0, "hello")

@@ -11,7 +11,7 @@ from PySide6.QtGui import QIcon, QPixmap
 
 SIZE = 40  # render size; Qt scales to display size automatically
 STROKE_BLUE = (10, 132, 255, 255)
-STROKE_DARK = (60, 60, 67, 255)
+STROKE_DARK = (148, 163, 184, 255)
 FILL_BLUE = (10, 132, 255, 255)
 FILL_BLUE_LIGHT = (10, 132, 255, 120)
 

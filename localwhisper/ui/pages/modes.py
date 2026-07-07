@@ -227,6 +227,7 @@ class ModesPage(QWidget):
         self._save()
 
     def _save(self, *args):
+        previous_model = self.cfg.model
         for label, code in self._lang_codes.items():
             if self.language.currentText() == label:
                 self.cfg.language = code
@@ -244,7 +245,8 @@ class ModesPage(QWidget):
                 break
         self.cfg.streaming = self.streaming_toggle.isChecked()
         self.cfg.save()
-        self._refresh_model_status()
+        if self.cfg.model != previous_model:
+            self._refresh_model_status()
         self.config_changed.emit()
 
     def _pick_models_dir(self) -> None:

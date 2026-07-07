@@ -14,6 +14,26 @@ if sys.platform != "win32":
     raise ImportError("localwhisper.focus requires Windows")
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_SHOWWINDOW = 0x0040
+
+user32.BringWindowToTop.argtypes = (wintypes.HWND,)
+user32.BringWindowToTop.restype = wintypes.BOOL
+user32.SetWindowPos.argtypes = (
+    wintypes.HWND,
+    wintypes.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.UINT,
+)
+user32.SetWindowPos.restype = wintypes.BOOL
 
 DESKTOP_CLASSES = {
     "Progman",            # Desktop
@@ -31,6 +51,18 @@ EDITABLE_CLASS_MARKERS = (
     "ql-editor",
     "cm-content",
     "monaco-editor",
+)
+
+MODERN_TEXT_HOST_PROCESSES = (
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+    "code.exe",
+    "slack.exe",
+    "discord.exe",
+    "teams.exe",
 )
 
 
@@ -91,6 +123,18 @@ def get_process_name(hwnd: int) -> str:
     return ""
 
 
+def _gui_thread_info(hwnd: int) -> GUITHREADINFO | None:
+    pid = wintypes.DWORD(0)
+    thread_id = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not thread_id:
+        return None
+    info = GUITHREADINFO()
+    info.cbSize = ctypes.sizeof(GUITHREADINFO)
+    if not user32.GetGUIThreadInfo(thread_id, ctypes.byref(info)):
+        return None
+    return info
+
+
 def can_inject_text() -> bool:
     """Return True when the foreground focus looks like an editable text target.
 
@@ -114,13 +158,20 @@ def can_inject_text() -> bool:
         log.debug("can_inject: desktop/taskbar (class=%s)", cls)
         return False
 
+    process_name = get_process_name(hwnd).lower()
+    modern_text_host = any(marker in process_name for marker in MODERN_TEXT_HOST_PROCESSES)
+
     if _has_active_caret(hwnd):
         log.debug("can_inject: active caret detected for hwnd=%s class=%s", hwnd, cls)
         return True
 
-    uia_result = _uia_focused_control_looks_editable()
-    if uia_result is True:
-        return True
+    uia_result = None
+    for attempt in range(3):
+        uia_result = _uia_focused_control_looks_editable(modern_text_host=modern_text_host)
+        if uia_result is True:
+            return True
+        if attempt < 2:
+            time.sleep(0.04)
     if uia_result is False:
         # UIA gave a definitive negative — but we still trust Win32 markers
         # below, because some Electron apps mis-report editable controls.
@@ -133,18 +184,13 @@ def can_inject_text() -> bool:
 
 def _has_active_caret(hwnd: int) -> bool:
     """True when the focused thread has an active caret (= text-edit focus)."""
-    pid = wintypes.DWORD(0)
-    thread_id = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    if not thread_id:
-        return False
-    info = GUITHREADINFO()
-    info.cbSize = ctypes.sizeof(GUITHREADINFO)
-    if not user32.GetGUIThreadInfo(thread_id, ctypes.byref(info)):
+    info = _gui_thread_info(hwnd)
+    if info is None:
         return False
     return bool(info.hwndCaret)
 
 
-def _uia_focused_control_looks_editable() -> bool | None:
+def _uia_focused_control_looks_editable(*, modern_text_host: bool = False) -> bool | None:
     """Use Windows UI Automation for browser/Electron/modern app edit fields.
 
     Returns None when UIA is unavailable or ambiguous so callers can fall back
@@ -173,6 +219,17 @@ def _uia_focused_control_looks_editable() -> bool | None:
         return True
     if "edit" in control_type or "text" in control_type:
         return True
+    if modern_text_host and any(kind in control_type for kind in ("group", "custom", "pane")):
+        try:
+            if bool(control.GetValuePattern()) or bool(control.GetTextPattern()):
+                return True
+        except Exception:
+            pass
+        try:
+            if bool(control.GetLegacyIAccessiblePattern()):
+                return True
+        except Exception as e:
+            log.debug("can_inject UIA: LegacyIAccessible failed: %s", e)
     if "document" in control_type:
         # Browser contenteditable surfaces here. If GetTextPattern works we
         # trust it; if it errors we leave the decision to the Win32 path.
@@ -187,14 +244,8 @@ def _uia_focused_control_looks_editable() -> bool | None:
 
 
 def _focused_control_looks_editable(hwnd: int) -> bool:
-    pid = wintypes.DWORD(0)
-    thread_id = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    if not thread_id:
-        return False
-
-    info = GUITHREADINFO()
-    info.cbSize = ctypes.sizeof(GUITHREADINFO)
-    if user32.GetGUIThreadInfo(thread_id, ctypes.byref(info)):
+    info = _gui_thread_info(hwnd)
+    if info is not None:
         if info.hwndCaret:
             return True
         focus_hwnd = int(info.hwndFocus or 0)
@@ -209,8 +260,14 @@ def _focused_control_looks_editable(hwnd: int) -> bool:
 
 def get_focus_info() -> dict:
     hwnd = get_foreground_hwnd()
+    gui_info = _gui_thread_info(hwnd) if hwnd else None
+    focus_hwnd = int(gui_info.hwndFocus or 0) if gui_info is not None else 0
+    caret_hwnd = int(gui_info.hwndCaret or 0) if gui_info is not None else 0
     return {
         "hwnd": hwnd,
+        "focus_hwnd": focus_hwnd,
+        "focus_class": get_window_class(focus_hwnd) if focus_hwnd else "",
+        "caret_hwnd": caret_hwnd,
         "pid": get_window_pid(hwnd) if hwnd else 0,
         "class": get_window_class(hwnd) if hwnd else "",
         "title": get_window_title(hwnd) if hwnd else "",
@@ -219,15 +276,36 @@ def get_focus_info() -> dict:
     }
 
 
-def activate_window(hwnd: int) -> bool:
+def activate_window(hwnd: int, focus_hwnd: int = 0) -> bool:
     if not hwnd:
         return False
     try:
         if get_window_pid(hwnd) == os.getpid():
             return False
+        pid = wintypes.DWORD(0)
+        target_thread = user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        current_thread = kernel32.GetCurrentThreadId()
+        attached = bool(target_thread and target_thread != current_thread)
+        if attached:
+            user32.AttachThreadInput(current_thread, target_thread, True)
         user32.ShowWindow(hwnd, 5)  # SW_SHOW
+        user32.BringWindowToTop(hwnd)
         ok = bool(user32.SetForegroundWindow(hwnd))
+        if not ok:
+            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+            user32.BringWindowToTop(hwnd)
+            ok = bool(user32.SetForegroundWindow(hwnd))
+        if focus_hwnd:
+            user32.SetFocus(focus_hwnd)
         time.sleep(0.05)
         return ok
     except Exception:
         return False
+    finally:
+        try:
+            if "attached" in locals() and attached:
+                user32.AttachThreadInput(current_thread, target_thread, False)
+        except Exception:
+            pass
