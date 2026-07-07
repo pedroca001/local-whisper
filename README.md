@@ -30,10 +30,79 @@ cd local-whisper
 .\install.ps1
 ```
 
+### Instruções para LLMs/agentes instalarem a partir do link
+
+Se o usuário pedir para instalar o LocalWhisper e fornecer apenas este repositório,
+trate este README como a fonte de verdade e siga este fluxo no Windows:
+
+```powershell
+# 1) Escolha uma pasta local para o source.
+mkdir "$env:USERPROFILE\Projects" -ErrorAction SilentlyContinue
+cd "$env:USERPROFILE\Projects"
+
+# 2) Clone o repositório, ou atualize se ele já existir.
+if (Test-Path .\LocalWhisper\.git) {
+    cd .\LocalWhisper
+    git pull
+} else {
+    git clone https://github.com/pedroca001/local-whisper.git LocalWhisper
+    cd .\LocalWhisper
+}
+
+# 3) Rode o instalador oficial.
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+O instalador oficial `install.ps1` deve ser preferido a comandos manuais. Ele:
+
+- valida Python 3.10, 3.11 ou 3.12;
+- cria/reusa `.venv`;
+- detecta NVIDIA via `nvidia-smi`;
+- instala PyTorch com CUDA `cu128` quando houver GPU NVIDIA e CPU quando não houver;
+- instala o pacote em modo editable com `pip install -e .[diarize]`;
+- cria o atalho `LocalWhisper.lnk` na Área de Trabalho;
+- cria o atalho de inicialização em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`;
+- roda um smoke test de imports.
+
+Depois de instalar, valide assim:
+
+```powershell
+# O app deve listar os modelos.
+.\.venv\Scripts\python.exe run.py --list-models
+
+# Os testes sem GUI devem passar.
+.\.venv\Scripts\python.exe -m pytest tests/
+
+# O atalho do Desktop deve apontar para pythonw.exe run.py.
+$ws = New-Object -ComObject WScript.Shell
+$lnk = $ws.CreateShortcut("$env:USERPROFILE\Desktop\LocalWhisper.lnk")
+$lnk | Format-List Target*, Arguments, WorkingDirectory, IconLocation
+```
+
+Para abrir o app depois da instalação:
+
+```powershell
+& ".\.venv\Scripts\pythonw.exe" ".\run.py"
+```
+
+Ou use o atalho **LocalWhisper** criado na Área de Trabalho.
+
+Notas importantes para agentes:
+
+- Não instale dependências globais; use a `.venv` criada pelo `install.ps1`.
+- Não troque o fluxo para `.exe`; a instalação suportada é source install.
+- Não mova o bloco inicial de redirect de logs em `run.py`.
+- Em Windows PowerShell 5.1, evite redirecionar stderr de comandos nativos com
+  `2>$null` sob `$ErrorActionPreference = "Stop"`.
+- Se o usuário quiser não iniciar com o Windows, rode `.\install.ps1 -NoStartup`.
+- Se o usuário quiser apenas o app sem atalho de Desktop, rode `.\install.ps1 -NoShortcut`.
+- Logs ficam em `%LOCALAPPDATA%\LocalWhisper\app.log` e
+  `%LOCALAPPDATA%\LocalWhisper\app.log.err`.
+
 O `install.ps1` é idempotente e faz tudo sozinho:
 
 - Cria `.venv` se não existir.
-- Detecta GPU NVIDIA e instala o PyTorch certo (cu128 pra RTX 50xx, cu121 pra 30xx/40xx, CPU caso não tenha).
+- Detecta GPU NVIDIA e instala o PyTorch certo (`cu128` para NVIDIA recente, CPU caso não tenha).
 - Instala o app em modo editable + extra `diarize` (identificação de falantes).
 - Cria atalho **LocalWhisper** no Desktop.
 - Adiciona à pasta **Startup** do Windows.
@@ -44,7 +113,7 @@ Flags úteis:
 .\install.ps1 -NoStartup     # não adicionar na inicialização
 .\install.ps1 -NoShortcut    # não criar atalho no Desktop
 .\install.ps1 -ForceCpu      # forçar PyTorch CPU mesmo com GPU
-.\install.ps1 -CudaIndex https://download.pytorch.org/whl/cu118   # índice manual
+.\install.ps1 -CudaIndex https://download.pytorch.org/whl/cu128   # índice manual
 ```
 
 > Se o PowerShell bloquear o script, abra um terminal como administrador uma vez e rode
@@ -81,10 +150,9 @@ cd local-whisper
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# PyTorch — escolha conforme sua GPU:
-pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio   # RTX 50xx
-# pip install --index-url https://download.pytorch.org/whl/cu121 torch torchaudio # RTX 30xx/40xx
-# pip install torch torchaudio                                                    # CPU only
+# PyTorch — escolha conforme seu hardware:
+pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio   # NVIDIA recente
+# pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio   # CPU only
 
 pip install -e ".[diarize]"   # ou só pip install -e . se não quiser diarização
 ```
