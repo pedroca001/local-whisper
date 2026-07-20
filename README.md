@@ -30,6 +30,12 @@ cd local-whisper
 .\install.ps1
 ```
 
+For synced source folders, keep the heavy Python runtime outside the synced repo:
+
+```powershell
+.\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
+```
+
 ### Instruções para LLMs/agentes instalarem a partir do link
 
 Se o usuário pedir para instalar o LocalWhisper e fornecer apenas este repositório,
@@ -51,12 +57,15 @@ if (Test-Path .\LocalWhisper\.git) {
 
 # 3) Rode o instalador oficial.
 powershell -ExecutionPolicy Bypass -File .\install.ps1
+
+# Se o source estiver em pasta sincronizada, mantenha a venv fora dela.
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
 ```
 
 O instalador oficial `install.ps1` deve ser preferido a comandos manuais. Ele:
 
 - valida Python 3.10, 3.11 ou 3.12;
-- cria/reusa `.venv`;
+- cria/reusa `.venv` ou o caminho passado em `-VenvPath`;
 - detecta NVIDIA via `nvidia-smi`;
 - instala PyTorch com CUDA `cu128` quando houver GPU NVIDIA e CPU quando não houver;
 - instala o pacote em modo editable com `pip install -e .[diarize]`;
@@ -90,6 +99,7 @@ Ou use o atalho **LocalWhisper** criado na Área de Trabalho.
 Notas importantes para agentes:
 
 - Não instale dependências globais; use a `.venv` criada pelo `install.ps1`.
+- Se o source estiver em Google Drive/Dropbox/OneDrive, use `-VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"`.
 - Não troque o fluxo para `.exe`; a instalação suportada é source install.
 - Não mova o bloco inicial de redirect de logs em `run.py`.
 - Em Windows PowerShell 5.1, evite redirecionar stderr de comandos nativos com
@@ -101,7 +111,7 @@ Notas importantes para agentes:
 
 O `install.ps1` é idempotente e faz tudo sozinho:
 
-- Cria `.venv` se não existir.
+- Cria `.venv` se não existir, ou usa `-VenvPath` quando informado.
 - Detecta GPU NVIDIA e instala o PyTorch certo (`cu128` para NVIDIA recente, CPU caso não tenha).
 - Instala o app em modo editable + extra `diarize` (identificação de falantes).
 - Cria atalho **LocalWhisper** no Desktop.
@@ -114,6 +124,7 @@ Flags úteis:
 .\install.ps1 -NoShortcut    # não criar atalho no Desktop
 .\install.ps1 -ForceCpu      # forçar PyTorch CPU mesmo com GPU
 .\install.ps1 -CudaIndex https://download.pytorch.org/whl/cu128   # índice manual
+.\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"      # venv fora do source
 ```
 
 > Se o PowerShell bloquear o script, abra um terminal como administrador uma vez e rode
@@ -138,7 +149,7 @@ dependências mudarem.
 .\uninstall.ps1
 ```
 
-Não apaga o source nem o `.venv` — só os atalhos do Desktop e da inicialização.
+Não apaga o source nem a venv — só os atalhos do Desktop e da inicialização.
 
 ### Instalação manual (passo a passo)
 
@@ -203,6 +214,7 @@ python -c "from faster_whisper import WhisperModel; m = WhisperModel('large-v3-t
 
 - Config: `%APPDATA%\LocalWhisper\config.json`
 - Histórico (SQLite): `%APPDATA%\LocalWhisper\history.db`
+- Runtime Python opcional: `%LOCALAPPDATA%\LocalWhisper\venv`
 - Modelos baixados: `%LOCALAPPDATA%\LocalWhisper\models`
 - Pasta de modelos configurável: **Settings → Modes → Installed models**
 - Transcrições `.txt`: pasta configurável em **Settings → Configuration → Save folder**

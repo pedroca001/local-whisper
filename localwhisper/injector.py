@@ -28,6 +28,17 @@ VK_LWIN = 0x5B
 VK_RWIN = 0x5C
 
 CF_UNICODETEXT = 13
+CF_BITMAP = 2
+CF_METAFILEPICT = 3
+CF_DIB = 8
+CF_PALETTE = 9
+CF_ENHMETAFILE = 14
+CF_DIBV5 = 17
+CF_DSPBITMAP = 0x0082
+CF_DSPMETAFILEPICT = 0x0083
+CF_DSPENHMETAFILE = 0x008E
+CF_PRIVATEFIRST = 0x0200
+CF_PRIVATELAST = 0x02FF
 GMEM_MOVEABLE = 0x0002
 EM_REPLACESEL = 0x00C2
 SMTO_ABORTIFHUNG = 0x0002
@@ -246,6 +257,21 @@ def _read_global_bytes(handle: int) -> bytes | None:
         kernel32.GlobalUnlock(handle)
 
 
+def _clipboard_format_uses_hglobal(fmt: int) -> bool:
+    """Whether GetClipboardData returns memory safe for GlobalSize/GlobalLock."""
+    if CF_PRIVATEFIRST <= fmt <= CF_PRIVATELAST:
+        return False
+    return fmt not in {
+        CF_BITMAP,
+        CF_METAFILEPICT,
+        CF_PALETTE,
+        CF_ENHMETAFILE,
+        CF_DSPBITMAP,
+        CF_DSPMETAFILEPICT,
+        CF_DSPENHMETAFILE,
+    }
+
+
 def _alloc_global_bytes(data: bytes) -> int:
     handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
     if not handle:
@@ -298,6 +324,8 @@ def snapshot_clipboard() -> ClipboardSnapshot | None:
             fmt = int(user32.EnumClipboardFormats(fmt))
             if not fmt:
                 break
+            if not _clipboard_format_uses_hglobal(fmt):
+                continue
             handle = user32.GetClipboardData(fmt)
             data = _read_global_bytes(handle)
             if data is not None:

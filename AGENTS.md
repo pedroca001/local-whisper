@@ -1,244 +1,67 @@
-# LocalWhisper — Agent Guide
+# LocalWhisper - Agent Guide
 
-Briefing for AI coding agents working on this repo. Mirrors `CLAUDE.md`.
+## Purpose
 
----
+- Source repo for Pedro's Windows offline dictation and transcription app.
+- The canonical source checkout is `<CODIGO_ROOT>\LocalWhisper`; the Brain context lives in `<BRAIN_ROOT>\Projetos\Webapps_Infoapps\localwhisper.md`.
+- The app records audio locally, transcribes with Whisper/Parakeet on NVIDIA GPUs, and inserts text into the focused Windows target.
 
-## What it does
+## Ownership
 
-Offline dictation app for Windows powered by Whisper / Parakeet on NVIDIA GPUs.
+- Brain owner doc: `<BRAIN_ROOT>\Projetos\Webapps_Infoapps\localwhisper.md`.
+- Code inventory: `<BRAIN_ROOT>\REFERENCIAS_CODIGO.md`.
+- Current desktop runtime venv: `%LOCALAPPDATA%\LocalWhisper\venv`, installed with `.\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"`.
+- Model cache: `%LOCALAPPDATA%\LocalWhisper\models`. Do not move or delete the `large-v3-turbo` / `whisper-turbo` cache without explicit approval from Pedro.
 
-- **Global hotkey** (default `Ctrl+Space`) starts/stops recording from any window.
-- **Text injection**: when focus is on a text field, transcribed text is inserted
-  without clipboard for native edit/RichEdit controls (`EM_REPLACESEL`, e.g.
-  Notepad), then via `SendInput` Unicode fallback, and only uses protected
-  clipboard + paced `Ctrl+V` for browser/Electron-style targets that need paste
-  (PT-BR accents work).
-- **Overlay** appears when focus is on Desktop/Taskbar; result goes to history.
-- **System tray** menu: Settings / Record manually / Quit.
-- **Copy last entry** is the first tray menu item and copies the most recent
-  successful transcription to the clipboard.
-- **Settings UI** (PySide6) with pages: Home, Modes, Transcribe File, Vocabulary,
-  Configuration, Sound, History.
-- **History** for last 7 days, mirrored as `.txt` files per day.
-- **Transcribe File** (new): pick mp3/mp4/wav/mkv/etc., choose language (or
-  auto-detect), optionally identify speakers via pyannote.audio. Output is plain
-  text with `[Speaker N]` tags.
-- **Models**: `whisper-turbo` (default), `whisper-ultra` (`large-v3`),
-  `parakeet-v3` (lazy via NeMo, optional extra).
-- **Model manager**: Settings -> Modes shows installed/not installed status,
-  lets the user choose the models folder, install missing models, and uninstall
-  inactive models.
-- **Vocabulary corrections**: vocabulary prompt bias plus post-transcription
-  replacement rules, useful for terms like `cloud -> CLAUDE`.
+## Local Contracts
 
----
+- Supported distribution is source install. The `.exe` build path is secondary and does not support diarization unless the PyInstaller bundle is redesigned.
+- Keep heavy runtime artifacts out of Git. `.venv`, logs, build output, downloaded models, caches, and local credentials stay untracked.
+- Keep the early stdout/stderr redirect and `six` import hook patch in `run.py`; moving them can make `pythonw.exe` fail silently.
+- Text insertion must preserve the validated cascade: direct Win32/RichEdit insertion, Unicode `SendInput` fallback, then protected clipboard paste only for modern browser/Electron-style targets.
+- Clipboard snapshots must only call `GlobalSize`/`GlobalLock` for `HGLOBAL`-backed formats. Never treat `CF_BITMAP`, palette, or metafile handles as global memory; preserve bitmap content through `CF_DIB`/`CF_DIBV5`.
+- Config and history live in `%APPDATA%\LocalWhisper`; logs and models live in `%LOCALAPPDATA%\LocalWhisper`.
+- HuggingFace tokens for pyannote are user secrets. Never write token values to the repo, Brain, logs, or chat.
 
-## Layout
+## Work Guidance
 
-```
-run.py                          # Entry point; pythonw redirects + six patch + argparse
-install.ps1                     # One-click installer (idempotent)
-uninstall.ps1                   # Removes shortcuts only
-pyproject.toml                  # Editable install + extras: parakeet, diarize, dev
-localwhisper/
-  app.py                        # QApplication, tray, hotkey wiring
-  audio.py                      # sounddevice Recorder, SAMPLE_RATE=16000
-  hotkey.py                     # Global hotkey via Win32 RegisterHotKey
-  injector.py                   # Win32 direct insert + protected clipboard + Unicode fallback
-  focus.py                      # Detect if focused window has a text field
-  config.py                     # JSON config in %APPDATA%\LocalWhisper\config.json
-  storage.py                    # SQLite history + .txt mirror
-  gpu.py                        # NVML detect + register CUDA DLL dir (torch/lib first)
-  autostart.py                  # HKCU\...\Run toggle
-  transcriber/
-    base.py                     # ASREngine ABC
-    registry.py                 # list_models / get_engine
-    faster_whisper_engine.py    # ctranslate2-based engines
-    parakeet_engine.py          # NeMo lazy import (optional)
-    diarization.py              # pyannote.audio Pipeline wrapper
-    file_transcriber.py         # ffmpeg → ASR → diarize → stitch
-  ui/
-    settings_window.py          # Sidebar + page switcher
-    style.qss                   # Qt stylesheet
-    icons.py                    # SVG icons
-    pages/                      # home, modes, transcribe_file, vocabulary,
-                                # configuration, sound, history
-    widgets/                    # card, waveform, toggle_switch
-  resources/icons/              # App + tray icons (also at icons/ at repo root)
-tests/                          # pytest, no GUI deps
-```
+- Use `install.ps1` for setup and updates. For synced source folders, pass `-VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"` so the heavy Python runtime does not live in Google Drive.
+- Keep `.ps1` scripts ASCII-safe for Windows PowerShell 5.1.
+- Add dependencies in `pyproject.toml`; mirror only when the existing requirements workflow needs it.
+- Lazy-import heavy modules such as `torch`, `pyannote.audio`, and `nemo` inside the feature path that needs them.
+- Tests in `tests/` should not import PySide6 or require the GUI/tray.
+- For insertion changes, verify a native target such as Notepad separately from browser/Electron editors.
 
----
+## Verification
 
-## Install / build workflow
+- Install/update on Pedro's desktop:
+  ```powershell
+  .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
+  ```
+- Confirm editable install points to this repo:
+  ```powershell
+  & "$env:LOCALAPPDATA\LocalWhisper\venv\Scripts\python.exe" -m pip show localwhisper
+  ```
+- Smoke imports and model listing:
+  ```powershell
+  & "$env:LOCALAPPDATA\LocalWhisper\venv\Scripts\python.exe" run.py --list-models
+  ```
+- Run non-GUI tests:
+  ```powershell
+  & "$env:LOCALAPPDATA\LocalWhisper\venv\Scripts\python.exe" -m pytest tests/
+  ```
+- Verify CLI wrapper and model cache:
+  ```powershell
+  whisper --check
+  whisper --model-path
+  ```
+- Inspect Desktop/Startup shortcuts after installer changes; both should target `%LOCALAPPDATA%\LocalWhisper\venv\Scripts\pythonw.exe` with `run.py` from `<CODIGO_ROOT>\LocalWhisper`.
 
-**Recommended (source install via GitHub):**
+## Child DOX Index
 
-```powershell
-git clone https://github.com/pedroca001/local-whisper.git
-cd local-whisper
-.\install.ps1
-```
-
-`install.ps1` is idempotent and:
-
-1. Verifies Python 3.10–3.12.
-2. Creates `.venv` if missing.
-3. Detects NVIDIA GPU via `nvidia-smi`. Picks the right PyTorch index:
-   - RTX 50xx / Blackwell → `cu128`
-   - Others NVIDIA → `cu121`
-   - No NVIDIA → `cpu`
-   Override with `-CudaIndex <url>` or `-ForceCpu`.
-4. Installs torch + torchaudio if missing (detected via `Test-Path` on the
-   package dir; do NOT shell out — see "PowerShell 5.1 quirks" below).
-5. `pip install -e .[diarize]` — editable + diarization extra.
-6. Smoke test (informational; failure is non-fatal).
-7. Creates `LocalWhisper.lnk` on Desktop and in `%APPDATA%\Microsoft\Windows\
-   Start Menu\Programs\Startup`. Skip with `-NoShortcut` / `-NoStartup`.
-
-**Manual install** documented in `README.md`.
-
-**`.exe` build** still works via `build.ps1` + `installer.iss` (PyInstaller +
-Inno Setup), but **diarization will not work in the bundled `.exe`** because
-`localwhisper.spec` excludes `torch`/`torchaudio` to keep the bundle small.
-Source install is the supported path.
-
----
-
-## Known bugs / quirks
-
-### PowerShell 5.1 (Windows PowerShell)
-
-- **Native-command stderr wrapping**: `& exe ... 2>$null` (or `2>&1`) wraps each
-  stderr line as `NativeCommandError`; under `$ErrorActionPreference = "Stop"`
-  this aborts the script even on exit code 0. Avoid stderr redirects on native
-  commands. For "is package installed" probes, use `Test-Path` on
-  `.venv\Lib\site-packages\<pkg>\__init__.py`.
-- **ANSI script encoding**: `.ps1` files without a UTF-8 BOM are read as
-  Windows-1252. Non-ASCII characters cause parse errors. Keep all scripts ASCII.
-- **`$Args` is reserved**: never use `$Args` as a function param name — it
-  silently fails to bind. Use `$ArgList` or anything else.
-
-### `pythonw.exe` silent crash
-
-Under `pythonw.exe`, `sys.stdout` and `sys.stderr` are `None`. Any module that
-prints or writes a warning during import raises `AttributeError` and the app
-crashes silently. `run.py` redirects to log files in
-`%LOCALAPPDATA%\LocalWhisper\app.log` / `app.log.err` *before* any other
-imports. **Do not move that block.**
-
-### PySide6 + `six` import-hook crash
-
-`pystray._win32` does `from six.moves import queue`. PySide6's
-`shibokensupport.feature.feature_imported` introspects every newly imported
-module with `inspect.getsource()`, which calls `repr()` on `six.moves`
-submodules. CPython's `_module_repr_from_spec` reads `spec.loader._path`, but
-six's `_SixMetaPathImporter` has no `_path` attribute → `AttributeError`,
-import chain dies, app fails to start.
-
-**Fix in `run.py`** (do not remove): we patch
-`six._SixMetaPathImporter._path = None` early, before PySide6 is loaded.
-
-Symptom on broken machines: `AttributeError: '_SixMetaPathImporter' object has
-no attribute '_path'` in `app.log.err`. The condition depends on PySide6 / six
-versions, so it appears on some PCs and not others.
-
-### `torchcodec` warning at import
-
-`pyannote.audio` pulls in `torchcodec`, which tries to load FFmpeg system DLLs.
-We don't ship those — but we never need torchcodec because
-`localwhisper/transcriber/diarization.py` feeds the pipeline a preloaded
-`{"waveform": tensor, "sample_rate": int}` dict (decoded by `imageio-ffmpeg`).
-The warning at import time is **cosmetic, ignore it.**
-
-### CUDA detection
-
-`localwhisper/gpu.py` checks for a loadable `cublas64_12.dll` in this order:
-already in PATH → frozen `_MEIPASS` → `torch/lib/` (the wheel-bundled CUDA
-runtime) → `CUDA_PATH` env vars → standard CUDA Toolkit install dir.
-
-The `torch/lib/` step is what makes GPU work without a system-wide CUDA Toolkit
-install. If you change torch versions and lose `cublas64_12.dll`, GPU silently
-falls back to CPU; check `app.log` for `"Registered torch CUDA lib dir"` /
-`"cublas64_12.dll found in torch wheel"`.
-
-### Diarization requires HuggingFace token
-
-`pyannote/speaker-diarization-3.1` is gated. User must:
-1. Accept terms at <https://huggingface.co/pyannote/speaker-diarization-3.1>.
-2. Generate a Read token at <https://huggingface.co/settings/tokens>.
-3. Paste into Settings → Configuration → HuggingFace token.
-
-Without a token, file transcription still works — only the speaker labels are
-skipped. Error path is in `transcriber/diarization.py`.
-
-### `pyproject.toml` Python cap
-
-Says `>=3.10,<3.13` but the dev `.venv` may already be on 3.12 or even 3.14.
-Most code works on 3.13/3.14 but PyTorch wheel availability varies. If you
-bump, verify `cu128` wheels exist for the target Python version before
-relaxing the cap.
-
-### `.exe` bundle gap
-
-`localwhisper.spec` excludes `torch`/`torchaudio` (they were only used by the
-optional Parakeet path). After adding diarization, the bundle no longer
-supports speaker ID. Either:
-- Drop `.exe` distribution (current direction — see commit 87800d2).
-- Or remove `torch`/`torchaudio` from `excludes` and add `pyannote.audio` to
-  `collect_all`. Bundle grows by ~3 GB.
-
----
-
-## Conventions
-
-- Use `Edit` over `Write` for existing files; never reformat unrelated code.
-- Keep `.ps1` scripts ASCII-only (see PowerShell 5.1 quirks).
-- New deps go in `pyproject.toml` (and `requirements.txt` mirror).
-- New optional features → an `[extras]` group, not core deps.
-- Lazy-import heavy modules (`torch`, `pyannote.audio`, `nemo`) inside the
-  function that needs them, not at module top.
-- Don't print directly — use `logging.getLogger(__name__)`.
-- Tests in `tests/` must not import PySide6 or run the GUI.
-
----
-
-## Useful commands
-
-```powershell
-# Run from source (with console for debugging)
-.\.venv\Scripts\python.exe run.py
-
-# Run hidden (production)
-.\.venv\Scripts\pythonw.exe run.py
-
-# Tail crash log
-Get-Content "$env:LOCALAPPDATA\LocalWhisper\app.log.err" -Tail 80
-
-# CLI test (no UI, no tray)
-.\.venv\Scripts\python.exe run.py --cli --duration 5 --model whisper-turbo
-
-# List models
-.\.venv\Scripts\python.exe run.py --list-models
-
-# Tests
-.\.venv\Scripts\python.exe -m pytest tests/
-
-# Inspect shortcut
-$ws = New-Object -ComObject WScript.Shell
-$lnk = $ws.CreateShortcut("$env:USERPROFILE\Desktop\LocalWhisper.lnk")
-$lnk | Format-List Target*, Arguments, WorkingDirectory, IconLocation
-```
-
----
-
-## File system surfaces
-
-- Config: `%APPDATA%\LocalWhisper\config.json`
-- History DB: `%APPDATA%\LocalWhisper\history.db`
-- Logs: `%LOCALAPPDATA%\LocalWhisper\app.log`, `app.log.err`
-- Whisper model cache: `%LOCALAPPDATA%\LocalWhisper\models`
-- Configurable model cache: `Config.models_dir` (defaults to the path above)
-- HuggingFace cache (pyannote weights ~70 MB): `%USERPROFILE%\.cache\huggingface`
-- User-visible transcripts: `%USERPROFILE%\Documents\LocalWhisper` (configurable)
+- `localwhisper/`: application package, transcription engines, UI, text insertion, storage, config, hotkey, tray, and assets.
+- `localwhisper/transcriber/`: ASR backends, diarization, file transcription, and model registry.
+- `localwhisper/ui/`: PySide6 settings UI, overlay, pages, widgets, icons, and styling.
+- `tests/`: non-GUI pytest coverage for storage, vocabulary, hotkeys, insertion policy, injector behavior, model manager, assets, and audio gate logic.
+- `tools/`: manual verification helpers such as real Windows text insertion target checks.
+- `icons/` and `localwhisper/resources/`: app and tray icon sources used by shortcuts and builds.

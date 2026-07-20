@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localwhisper"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local dictation app for Windows powered by Whisper / Parakeet on RTX GPUs."
 requires-python = ">=3.10,<3.13"
 authors = [{ name = "Pedro" }]

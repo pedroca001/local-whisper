@@ -117,10 +117,16 @@ cd local-whisper
 .\install.ps1
 ```
 
+Para source em pasta sincronizada, mantenha a venv fora do repo:
+
+```powershell
+.\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
+```
+
 O `install.ps1` é idempotente e realiza automaticamente:
 
 1. Verifica Python 3.10–3.12.
-2. Cria o `.venv` se não existir.
+2. Cria o `.venv` se não existir, ou usa `-VenvPath` quando informado.
 3. Detecta GPU NVIDIA via `nvidia-smi` e escolhe o índice PyTorch correto:
    - RTX 50xx / Blackwell → `cu128`
    - Outras NVIDIA → `cu121`
@@ -162,6 +168,7 @@ Get-Content "$env:LOCALAPPDATA\LocalWhisper\app.log.err" -Tail 80
 | `%APPDATA%\LocalWhisper\history.db` | Banco de dados SQLite do histórico |
 | `%LOCALAPPDATA%\LocalWhisper\app.log` | Log principal |
 | `%LOCALAPPDATA%\LocalWhisper\app.log.err` | Log de erros |
+| `%LOCALAPPDATA%\LocalWhisper\venv` | Runtime Python opcional fora do source |
 | `%LOCALAPPDATA%\LocalWhisper\models` | Cache dos modelos Whisper |
 | `Config.models_dir` | Pasta configurável para instalação/cache dos modelos |
 | `%USERPROFILE%\.cache\huggingface` | Pesos do pyannote (~70 MB) |

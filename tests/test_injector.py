@@ -6,6 +6,11 @@ if sys.platform != "win32":
     pytest.skip("Windows-only", allow_module_level=True)
 
 from localwhisper.injector import (
+    CF_BITMAP,
+    CF_DIB,
+    CF_DIBV5,
+    CF_ENHMETAFILE,
+    CF_PALETTE,
     CF_UNICODETEXT,
     INPUT,
     KEYBDINPUT,
@@ -13,6 +18,7 @@ from localwhisper.injector import (
     KEYEVENTF_UNICODE,
     VK_CONTROL,
     VK_V,
+    _clipboard_format_uses_hglobal,
     _dword_clipboard_bytes,
     _make_unicode_input,
     _make_vk_input,
@@ -66,6 +72,16 @@ def test_protected_clipboard_payload_helpers():
     assert CF_UNICODETEXT == 13
     assert _text_to_clipboard_bytes("abc") == b"a\x00b\x00c\x00\x00\x00"
     assert _dword_clipboard_bytes(0) == b"\x00\x00\x00\x00"
+
+
+def test_clipboard_snapshot_only_reads_global_memory_formats():
+    """GDI clipboard handles must never be passed to GlobalSize/GlobalLock."""
+    assert _clipboard_format_uses_hglobal(CF_UNICODETEXT)
+    assert _clipboard_format_uses_hglobal(CF_DIB)
+    assert _clipboard_format_uses_hglobal(CF_DIBV5)
+    assert not _clipboard_format_uses_hglobal(CF_BITMAP)
+    assert not _clipboard_format_uses_hglobal(CF_PALETTE)
+    assert not _clipboard_format_uses_hglobal(CF_ENHMETAFILE)
 
 
 def test_win32_message_helpers_reject_missing_hwnd():

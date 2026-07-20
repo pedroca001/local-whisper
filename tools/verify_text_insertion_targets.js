@@ -5,7 +5,17 @@ const os = require("os");
 const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..");
-const python = path.join(repoRoot, ".venv", "Scripts", "python.exe");
+const pythonCandidates = [
+  process.env.LOCALWHISPER_PYTHON,
+  process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "LocalWhisper", "venv", "Scripts", "python.exe")
+    : null,
+  path.join(repoRoot, ".venv", "Scripts", "python.exe"),
+].filter(Boolean);
+const python = pythonCandidates.find((candidate) => fs.existsSync(candidate));
+if (!python) {
+  throw new Error(`LocalWhisper Python runtime not found. Checked: ${pythonCandidates.join(", ")}`);
+}
 
 function existingBrowser() {
   const candidates = [
