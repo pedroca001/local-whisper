@@ -26,10 +26,15 @@
               https://download.pytorch.org/whl/cu121
               https://download.pytorch.org/whl/cpu
 
+.PARAMETER VenvPath
+    Custom virtualenv path. Useful when the source checkout lives in a synced
+    folder but the heavy runtime should stay in a local machine folder.
+
 .EXAMPLE
     .\install.ps1
     .\install.ps1 -NoStartup
     .\install.ps1 -ForceCpu
+    .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
 #>
 
 [CmdletBinding()]
@@ -37,12 +42,21 @@ param(
     [switch]$NoShortcut,
     [switch]$NoStartup,
     [switch]$ForceCpu,
-    [string]$CudaIndex
+    [string]$CudaIndex,
+    [string]$VenvPath
 )
 
 $ErrorActionPreference = "Stop"
 $Root  = $PSScriptRoot
-$Venv  = Join-Path $Root ".venv"
+if ($VenvPath) {
+    if ([System.IO.Path]::IsPathRooted($VenvPath)) {
+        $Venv = $VenvPath
+    } else {
+        $Venv = Join-Path $Root $VenvPath
+    }
+} else {
+    $Venv = Join-Path $Root ".venv"
+}
 $VenvPy = Join-Path $Venv "Scripts\python.exe"
 $VenvPyw = Join-Path $Venv "Scripts\pythonw.exe"
 $RunPy = Join-Path $Root "run.py"
@@ -56,6 +70,7 @@ function Warn($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
 Write-Host ""
 Write-Host "LocalWhisper installer" -ForegroundColor Cyan
 Write-Host "Repo: $Root"
+Write-Host "Venv: $Venv"
 
 # ---------- 1) Python ----------
 Step "Checking Python"
