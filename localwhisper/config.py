@@ -203,6 +203,9 @@ class Config:
             # working microphone/hotkey setup and should not be interrupted by
             # an upgrade dialog.
             self.onboarding_complete = True
+            # Older releases kept history indefinitely. Preserve that contract
+            # during migration instead of silently pruning an existing archive.
+            self.history_retention_days = 0
         self.schema_version = CURRENT_SCHEMA_VERSION
         if not self.vocabulary_replacements:
             vocab = {str(w).strip().lower() for w in self.vocabulary if str(w).strip()}
