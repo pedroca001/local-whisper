@@ -1,8 +1,8 @@
 """Top-center recording/result overlay."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRectF, QTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QGuiApplication, QBrush
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,

@@ -1,25 +1,44 @@
 from __future__ import annotations
 
 import logging
+import os
+import platform
 import sys
 import threading
 import traceback
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from .config import _appdata_dir
+from .config import _local_appdata_dir
 
-LOG_PATH = _appdata_dir() / "localwhisper.log"
+
+def log_path() -> Path:
+    return _local_appdata_dir() / "localwhisper.log"
+
+
+LOG_PATH = log_path()
 
 
 def setup_logging() -> Path:
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [
+        RotatingFileHandler(
+            path,
+            maxBytes=2 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+    ]
+    if sys.stdout is not None and not getattr(sys, "frozen", False):
+        handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(threadName)s] %(name)s: %(message)s",
-        handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8")],
+        handlers=handlers,
         force=True,
     )
-    logging.getLogger(__name__).info("Logging started: %s", LOG_PATH)
+    logging.getLogger(__name__).info("Logging started: %s", path)
 
     def excepthook(exc_type, exc_value, exc_tb):
         logging.critical(
@@ -43,8 +62,31 @@ def setup_logging() -> Path:
 
         threading.excepthook = thread_excepthook
 
-    return LOG_PATH
+    return path
 
 
 def format_exception(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+
+def system_summary() -> dict:
+    """Return a redacted, support-friendly runtime summary."""
+    from . import __version__
+    from .config import config_path, history_db_path, models_dir_path
+
+    local_data = _local_appdata_dir()
+    writable_probe = local_data
+    while not writable_probe.exists() and writable_probe != writable_probe.parent:
+        writable_probe = writable_probe.parent
+    return {
+        "version": __version__,
+        "python": sys.version.split()[0],
+        "executable": sys.executable,
+        "platform": platform.platform(),
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "config_path": str(config_path()),
+        "history_db": str(history_db_path()),
+        "models_dir": str(models_dir_path()),
+        "log_path": str(log_path()),
+        "appdata_writable": writable_probe.exists() and os.access(writable_probe, os.W_OK),
+    }

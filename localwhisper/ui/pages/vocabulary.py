@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QListWidget, QPushButton, QHBoxLayout, QInputDialog, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QInputDialog, QLabel, QListWidget, QPushButton, QVBoxLayout, QWidget
 
-from ..widgets.card import Card
 from ...config import Config
+from ..widgets.card import Card
 
 
 class VocabularyPage(QWidget):

@@ -7,10 +7,13 @@ with arbitrary modifier+key combinations.
 from __future__ import annotations
 
 import ctypes
+import logging
 import sys
 import threading
 from ctypes import wintypes
 from typing import Callable, Optional
+
+log = logging.getLogger(__name__)
 
 if sys.platform != "win32":
     raise ImportError("localwhisper.hotkey requires Windows")
@@ -72,17 +75,24 @@ def parse_hotkey(spec: str) -> tuple[int, int]:
 
 
 class HotkeyManager:
-    """Registers a global hotkey on Windows. Calls `callback` on press."""
+    """Registers a global hotkey and optionally reports key release."""
 
-    def __init__(self, hotkey: str, callback: Callable[[], None]):
+    def __init__(
+        self,
+        hotkey: str,
+        callback: Callable[[], None],
+        release_callback: Callable[[], None] | None = None,
+    ):
         self.hotkey = hotkey
         self.callback = callback
+        self.release_callback = release_callback
         self._thread: Optional[threading.Thread] = None
         self._thread_id: Optional[int] = None
         self._registered = False
         self._registration_error: Optional[str] = None
         self._ready = threading.Event()
         self._stop = threading.Event()
+        self._pressed = threading.Event()
 
     @property
     def registered(self) -> bool:
@@ -111,6 +121,7 @@ class HotkeyManager:
         self._thread = None
         self._thread_id = None
         self._registered = False
+        self._pressed.clear()
 
     def change(self, hotkey: str) -> bool:
         self.stop()
@@ -149,12 +160,34 @@ class HotkeyManager:
                 if ret == 0 or ret == -1:
                     break
                 if msg.message == WM_HOTKEY:
+                    if self._pressed.is_set():
+                        continue
+                    self._pressed.set()
                     try:
                         self.callback()
                     except Exception:
-                        import traceback
-
-                        traceback.print_exc()
+                        log.exception("Global hotkey callback failed")
+                    if self.release_callback is not None:
+                        threading.Thread(
+                            target=self._wait_for_release,
+                            args=(vk,),
+                            name="HotkeyReleaseThread",
+                            daemon=True,
+                        ).start()
+                    else:
+                        self._pressed.clear()
         finally:
             user32.UnregisterHotKey(None, hotkey_id)
             self._registered = False
+
+    def _wait_for_release(self, vk: int) -> None:
+        try:
+            # RegisterHotKey reports presses only. Polling the primary key is a
+            # lightweight push-to-talk release detector without a global hook.
+            while not self._stop.wait(0.01):
+                if not (user32.GetAsyncKeyState(vk) & 0x8000):
+                    break
+            if not self._stop.is_set() and self.release_callback is not None:
+                self.release_callback()
+        finally:
+            self._pressed.clear()

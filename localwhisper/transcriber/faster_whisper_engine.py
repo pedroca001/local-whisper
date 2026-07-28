@@ -7,8 +7,8 @@ from typing import Optional
 
 import numpy as np
 
-from ..config import MODELS_DIR
 from ..audio_gate import looks_like_silence
+from ..config import default_models_dir
 from ..vocabulary import apply_replacements
 from .base import OnDeltaFn, TranscriberEngine
 
@@ -26,7 +26,7 @@ class FasterWhisperEngine(TranscriberEngine):
         self.model_name = model_name
         self.compute_type = compute_type
         self.compute_device = compute_device if compute_device in ("auto", "cuda", "cpu") else "auto"
-        self.models_dir = models_dir or str(MODELS_DIR)
+        self.models_dir = models_dir or default_models_dir()
         self._model = None
         self._lock = threading.Lock()
 
@@ -44,6 +44,10 @@ class FasterWhisperEngine(TranscriberEngine):
         # Streaming state
         self._stream_audio: list[np.ndarray] = []
         self._stream_emitted: str = ""
+        self._stream_candidate: str = ""
+        self._stream_sample_count = 0
+        self._stream_last_partial_samples = 0
+        self.stream_needs_recovery = False
         self._stream_lang: str = "pt"
         self._stream_on_delta: Optional[OnDeltaFn] = None
         self._stream_vad_filter: bool | None = None
@@ -247,6 +251,10 @@ class FasterWhisperEngine(TranscriberEngine):
 
         self._stream_audio = []
         self._stream_emitted = ""
+        self._stream_candidate = ""
+        self._stream_sample_count = 0
+        self._stream_last_partial_samples = 0
+        self.stream_needs_recovery = False
         self._stream_lang = language
         self._stream_vad_filter = vad_filter
         self._stream_vocabulary = vocabulary or []
@@ -257,9 +265,17 @@ class FasterWhisperEngine(TranscriberEngine):
             self.load()
 
     def push_chunk(self, samples: np.ndarray) -> None:
-        self._stream_audio.append(samples.astype(np.float32))
-        total_samples = sum(c.size for c in self._stream_audio)
-        if total_samples >= int(self._stream_min_seconds * 16000):
+        chunk = samples.astype(np.float32)
+        self._stream_audio.append(chunk)
+        self._stream_sample_count += chunk.size
+        elapsed_seconds = self._stream_sample_count / 16000.0
+        # Re-running Whisper over all accumulated audio is deliberately
+        # throttled. The previous condition stayed true after 1.5 seconds and
+        # attempted inference for every subsequent 30 ms microphone block.
+        interval_seconds = min(5.0, self._stream_min_seconds + elapsed_seconds / 60.0)
+        interval_samples = int(interval_seconds * 16000)
+        if self._stream_sample_count - self._stream_last_partial_samples >= interval_samples:
+            self._stream_last_partial_samples = self._stream_sample_count
             self._maybe_emit_partial()
 
     def _maybe_emit_partial(self) -> None:
@@ -297,19 +313,33 @@ class FasterWhisperEngine(TranscriberEngine):
 
         text = apply_replacements(text, None, self._stream_vocabulary)
 
-        if text and text != self._stream_emitted:
-            # Emit only the new suffix
-            if text.startswith(self._stream_emitted):
-                delta = text[len(self._stream_emitted):]
-            else:
-                # Heuristic: word overlap recovery — emit the full new tail
-                delta = text[len(self._stream_emitted):] if len(text) > len(self._stream_emitted) else ""
+        if not text:
+            return
+
+        # Whisper revises the last few words of a partial hypothesis. Commit
+        # only the prefix shared by two consecutive passes, trimmed to a word
+        # boundary, so text already injected into another app stays stable.
+        stable = ""
+        if self._stream_candidate:
+            common_length = 0
+            for left, right in zip(self._stream_candidate, text):
+                if left != right:
+                    break
+                common_length += 1
+            stable = text[:common_length]
+            if stable and len(stable) < len(text) and not stable[-1].isspace():
+                stable = stable.rsplit(" ", 1)[0] if " " in stable else ""
+        self._stream_candidate = text
+
+        if stable.startswith(self._stream_emitted):
+            delta = stable[len(self._stream_emitted):]
             if delta and self._stream_on_delta:
                 try:
                     self._stream_on_delta(delta)
                 except Exception:
                     pass
-            self._stream_emitted = text
+            if stable:
+                self._stream_emitted = stable
 
     def finalize_stream(self) -> str:
         if not self._stream_audio:
@@ -363,8 +393,12 @@ class FasterWhisperEngine(TranscriberEngine):
         delta = ""
         if final.startswith(self._stream_emitted):
             delta = final[len(self._stream_emitted):]
-        elif len(final) > len(self._stream_emitted):
-            delta = final[len(self._stream_emitted):]
+        elif self._stream_emitted:
+            self.stream_needs_recovery = True
+            logging.warning(
+                "Final streaming hypothesis diverged from committed text; "
+                "showing recovery result instead of appending a corrupt suffix"
+            )
         if delta and self._stream_on_delta:
             try:
                 self._stream_on_delta(delta)
@@ -373,4 +407,7 @@ class FasterWhisperEngine(TranscriberEngine):
 
         self._stream_audio = []
         self._stream_emitted = ""
+        self._stream_candidate = ""
+        self._stream_sample_count = 0
+        self._stream_last_partial_samples = 0
         return apply_replacements(final, None, self._stream_vocabulary)

@@ -41,9 +41,14 @@ LocalWhisper é um **aplicativo de ditado offline para Windows** que transcreve 
 | **Bandeja do sistema (tray)** | Menu com: Configurações, Gravar manualmente, Sair |
 | **Copiar última entrada** | Primeira opção do tray; copia a última transcrição para o clipboard |
 | **Interface de configurações** | Janela PySide6 com as páginas abaixo |
-| **Histórico** | Últimos 7 dias, espelhado em arquivos `.txt` por dia |
-| **Transcrição de arquivo** | Suporta mp3, mp4, wav, mkv e outros formatos de vídeo/áudio |
+| **Histórico** | Busca, favoritos, métricas, retenção configurável e exportação |
+| **Modo privado** | Não persiste a transcrição nem o espelho `.txt` |
+| **Perfis de escrita** | Presets e perfis customizados com ativação automática por app |
+| **Push-to-talk** | Alternativa ao hotkey de toggle |
+| **Transcrição de arquivo** | Fila/lote de mp3, mp4, wav, mkv e outros formatos |
 | **Identificação de falantes** | Via pyannote.audio — etiqueta `[Speaker N]` no texto |
+| **Legendas** | Exportação TXT, JSON, SRT e VTT |
+| **Diagnóstico** | Página e CLI para dependências, ffmpeg, banco e CUDA |
 | **Inicialização automática** | Pode ser configurado para iniciar com o Windows |
 | **Gerenciador de modelos** | Instala/desinstala modelos e permite escolher a pasta de cache |
 | **Correções de vocabulário** | Regras locais para corrigir termos técnicos após a transcrição |
@@ -52,11 +57,12 @@ LocalWhisper é um **aplicativo de ditado offline para Windows** que transcreve 
 
 - **Home** — visão geral e status
 - **Modes** — escolha do modelo, dispositivo (Auto/CUDA/CPU) e precisão (Float16, Int8 Float16, Int8)
-- **Transcribe File** — transcrição de arquivos de mídia com opção de identificação de falantes
+- **Transcribe File** — fila de mídia, cancelamento, lote, diarização e legendas
 - **Vocabulary** — vocabulário personalizado para melhorar o reconhecimento de termos específicos
 - **Configuration** — configurações gerais, token do HuggingFace
 - **Sound** — configurações de áudio e microfone
 - **History** — visualização do histórico de transcrições
+- **Diagnostics** — saúde da instalação e relatório redigido para suporte
 
 ---
 
@@ -83,7 +89,11 @@ localwhisper/
   hotkey.py                     # Hotkey global via Win32 RegisterHotKey
   injector.py                   # Inserção Win32 direta + clipboard protegido + Unicode
   focus.py                      # Detecta se a janela focada tem campo de texto
-  config.py                     # Config JSON em %APPDATA%\LocalWhisper\config.json
+  config.py                     # Config atômica + migração de schema
+  secret_store.py               # Segredos protegidos por Windows DPAPI
+  session.py                    # Máquina de estados das sessões de ditado
+  text_processing.py            # Comandos e limpeza local conservadora
+  doctor.py                     # Diagnóstico somente leitura
   storage.py                    # Histórico SQLite + espelho .txt
   gpu.py                        # Detecção NVML + registro do diretório CUDA
   autostart.py                  # Toggle de HKCU\...\Run (inicialização automática)
@@ -149,7 +159,11 @@ O `install.ps1` é idempotente e realiza automaticamente:
 Get-Content "$env:LOCALAPPDATA\LocalWhisper\app.log.err" -Tail 80
 
 # Teste CLI (sem interface, sem bandeja)
-.\.venv\Scripts\python.exe run.py --cli --duration 5 --model whisper-turbo
+.\.venv\Scripts\python.exe run.py record --duration 5 --model whisper-turbo
+
+# Arquivo/lote e diagnóstico
+.\.venv\Scripts\python.exe run.py transcribe .\reuniao.mp4 --format srt -o .\reuniao.srt
+.\.venv\Scripts\python.exe run.py doctor --json
 
 # Listar modelos disponíveis
 .\.venv\Scripts\python.exe run.py --list-models

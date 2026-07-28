@@ -30,11 +30,19 @@
     Custom virtualenv path. Useful when the source checkout lives in a synced
     folder but the heavy runtime should stay in a local machine folder.
 
+.PARAMETER Check
+    Run read-only health checks for an existing installation.
+
+.PARAMETER Repair
+    Reapply the editable package installation and recreate shortcuts.
+
 .EXAMPLE
     .\install.ps1
     .\install.ps1 -NoStartup
     .\install.ps1 -ForceCpu
     .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
+    .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv" -Check
+    .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv" -Repair
 #>
 
 [CmdletBinding()]
@@ -42,6 +50,8 @@ param(
     [switch]$NoShortcut,
     [switch]$NoStartup,
     [switch]$ForceCpu,
+    [switch]$Check,
+    [switch]$Repair,
     [string]$CudaIndex,
     [string]$VenvPath
 )
@@ -72,13 +82,43 @@ Write-Host "LocalWhisper installer" -ForegroundColor Cyan
 Write-Host "Repo: $Root"
 Write-Host "Venv: $Venv"
 
+if ($Check -and $Repair) {
+    Write-Error "Use either -Check or -Repair, not both."
+    exit 2
+}
+
+if ($Check) {
+    Step "Checking existing installation"
+    if (-not (Test-Path $VenvPy)) {
+        Write-Error "LocalWhisper virtualenv was not found at: $Venv"
+        exit 1
+    }
+    & $VenvPy -m pip check
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Python dependency check failed."
+        exit 1
+    }
+    & $VenvPy $RunPy --doctor
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "LocalWhisper diagnostics found a required problem."
+        exit 1
+    }
+    Ok "Installation is healthy."
+    exit 0
+}
+
 # ---------- 1) Python ----------
 Step "Checking Python"
 $pyExe = $null
 foreach ($cmd in @("py -3.12", "py -3.11", "py -3.10", "python")) {
     try {
         $parts = $cmd -split ' '
-        $ver = & $parts[0] $parts[1..($parts.Length-1)] -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+        $launcher = $parts[0]
+        $launcherArgs = @()
+        if ($parts.Length -gt 1) {
+            $launcherArgs = $parts[1..($parts.Length - 1)]
+        }
+        $ver = & $launcher @launcherArgs -c "import sys; print('%d.%d' % sys.version_info[:2])"
         if ($LASTEXITCODE -eq 0 -and $ver -match '^3\.(1[0-2])$') {
             $pyExe = $cmd
             Info "Found: $cmd ($ver)"
@@ -96,7 +136,12 @@ Step "Setting up virtualenv (.venv)"
 if (-not (Test-Path $VenvPy)) {
     Info "Creating .venv with $pyExe ..."
     $parts = $pyExe -split ' '
-    & $parts[0] $parts[1..($parts.Length-1)] -m venv $Venv
+    $launcher = $parts[0]
+    $launcherArgs = @()
+    if ($parts.Length -gt 1) {
+        $launcherArgs = $parts[1..($parts.Length - 1)]
+    }
+    & $launcher @launcherArgs -m venv $Venv
     if ($LASTEXITCODE -ne 0) { Write-Error "venv creation failed."; exit 1 }
     Ok "venv created."
 } else {
@@ -115,7 +160,7 @@ if (-not $torchIndex) {
         $hasNvidia = $false
         $smi = $null
         try {
-            $smi = nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+            $smi = nvidia-smi --query-gpu=name --format=csv,noheader
             if ($LASTEXITCODE -eq 0 -and $smi) {
                 $hasNvidia = $true
                 Info "GPU detected: $smi"
@@ -136,7 +181,7 @@ if (-not $torchIndex) {
 Info "PyTorch index: $torchIndex"
 
 # ---------- 4) torch (only if missing) ----------
-# Avoid running the python interpreter just to check — under Windows PowerShell
+# Avoid running the python interpreter just to check - under Windows PowerShell
 # 5.1, native-command stderr redirected with 2>$null gets wrapped as a
 # NativeCommandError and aborts the script under $ErrorActionPreference=Stop.
 $torchPkg = Join-Path $Venv "Lib\site-packages\torch\__init__.py"
@@ -151,7 +196,11 @@ if (Test-Path $torchPkg) {
 
 # ---------- 5) App + diarize ----------
 Step "Installing LocalWhisper (editable) + diarize extra"
-& $VenvPy -m pip install -e "$Root[diarize]"
+if ($Repair) {
+    & $VenvPy -m pip install --upgrade -e "$Root[diarize]"
+} else {
+    & $VenvPy -m pip install -e "$Root[diarize]"
+}
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install -e .[diarize] failed."; exit 1 }
 Ok "App + diarization installed."
 
@@ -175,6 +224,12 @@ if (-not ($torchIndex -like "*cpu*")) {
 Step "Smoke testing imports"
 & $VenvPy -c "import localwhisper, faster_whisper, PySide6, pyannote.audio; print('imports OK')"
 if ($LASTEXITCODE -ne 0) { Warn "Imports failed - check the log above." }
+
+Step "Validating installation"
+& $VenvPy -m pip check
+if ($LASTEXITCODE -ne 0) { Warn "Dependency conflicts detected - run install.ps1 -Repair." }
+& $VenvPy $RunPy --doctor
+if ($LASTEXITCODE -ne 0) { Warn "Diagnostics found a problem - open the Diagnostics page for details." }
 
 # ---------- 7) Shortcuts ----------
 function New-Shortcut {

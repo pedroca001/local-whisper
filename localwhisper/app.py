@@ -1,10 +1,10 @@
 """LocalWhisper bootstrap: tray + Qt event loop + hotkey + recording pipeline."""
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
-import logging
 from typing import Optional
 
 import numpy as np
@@ -12,7 +12,9 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import diagnostics, sounds, storage
+from .assets import app_icon_paths
 from .audio import Recorder, list_input_devices
+from .audio_gate import analyze_audio_activity
 from .config import Config
 from .focus import activate_window, get_focus_info
 from .hotkey import HotkeyManager
@@ -20,6 +22,7 @@ from .injector import (
     ClipboardSnapshot,
     current_clipboard_text,
     paste_clipboard_hotkey,
+    press_enter,
     release_modifiers,
     replace_selection_with_message,
     restore_clipboard,
@@ -28,22 +31,25 @@ from .injector import (
     type_unicode,
 )
 from .insertion_policy import input_events_succeeded, target_prefers_clipboard
-from .audio_gate import analyze_audio_activity
-from .vocabulary import apply_replacements
-from .assets import app_icon_paths
+from .session import DictationResult, DictationSession, DictationState, SessionState
+from .single_instance import SingleInstance
+from .text_processing import mode_for_target, process_stream_delta, process_transcript
 from .transcriber import get_engine
 from .tray import TrayIcon
 from .ui.overlay_recording import RecordingOverlay
 from .ui.settings_window import SettingsWindow
+from .vocabulary import apply_replacements
 
 
 class RecordingController(QObject):
     """Owns the recording state machine. Lives on the Qt main thread."""
 
     delta_ready = Signal(str)
-    finalized = Signal(str, int)  # text, duration_ms
+    finalized = Signal(object)  # DictationResult
     started = Signal()
     stopped = Signal()
+    cancelled = Signal()
+    state_changed = Signal(str)
     audio_level = Signal(float)
     error_occurred = Signal(str, str)  # title, detail
 
@@ -61,17 +67,35 @@ class RecordingController(QObject):
         self._target_title: Optional[str] = None
         self._t_start: float = 0.0
         self._engine_lock = threading.Lock()
-        self._engine_ready = threading.Event()
-        self._engine_load_error: Optional[str] = None
         self._engine_thread: Optional[threading.Thread] = None
-        self._stream_thread: Optional[threading.Thread] = None
-        self._stream_stop = threading.Event()
-        self._stream_started = False
-        self._session_streaming = False
+        self._stream_operation_lock = threading.RLock()
+        self._session: DictationSession | None = None
+        self._state = SessionState()
+        self._max_session_timer = QTimer(self)
+        self._max_session_timer.setSingleShot(True)
+        self._max_session_timer.timeout.connect(self.stop)
+        self._engine_idle_timer = QTimer(self)
+        self._engine_idle_timer.setSingleShot(True)
+        self._engine_idle_timer.timeout.connect(self._unload_engine_if_idle)
 
     @property
     def is_recording(self) -> bool:
-        return self._is_recording
+        return self._state.value == DictationState.RECORDING
+
+    @property
+    def is_busy(self) -> bool:
+        return self._state.busy
+
+    @property
+    def state(self) -> DictationState:
+        return self._state.value
+
+    def _set_state(self, state: DictationState, *, force: bool = False) -> bool:
+        changed = self._state.transition(state, force=force)
+        if changed:
+            self._is_recording = state == DictationState.RECORDING
+            self.state_changed.emit(state.value)
+        return changed
 
     def ensure_engine(self) -> None:
         with self._engine_lock:
@@ -97,82 +121,117 @@ class RecordingController(QObject):
             logging.info("ASR engine loaded: %s", getattr(self._engine, "display_name", self.cfg.model))
 
     def toggle(self) -> None:
-        if self._is_recording:
+        if self.is_recording:
             self.stop()
-        else:
+        elif self.state == DictationState.IDLE:
             self.start()
+        else:
+            logging.info("Ignoring toggle while dictation state is %s", self.state.value)
 
     def start(self) -> None:
-        if self._is_recording:
+        if self.state != DictationState.IDLE:
             return
+        self._engine_idle_timer.stop()
         info = get_focus_info()
         self._target_hwnd = int(info.get("hwnd") or 0)
         self._target_focus_hwnd = int(info.get("focus_hwnd") or info.get("caret_hwnd") or 0)
         self._target_app = info.get("process") or None
         self._target_title = info.get("title") or None
         self._injecting = bool(info.get("can_inject"))
+        mode = mode_for_target(
+            self.cfg.dictation_modes,
+            self.cfg.active_mode_id,
+            self._target_app,
+            self._target_title,
+        )
+        self._session = DictationSession(
+            target_hwnd=self._target_hwnd,
+            target_focus_hwnd=self._target_focus_hwnd,
+            target_app=self._target_app,
+            target_title=self._target_title,
+            can_inject=self._injecting,
+            mode=dict(mode),
+            streaming=bool(self.cfg.streaming),
+        )
         logging.info("Recording target captured: %s", info)
 
+        if not self._set_state(DictationState.RECORDING):
+            return
         device_idx = self._resolve_device()
         self._recorder = Recorder(device=device_idx, on_block=self._on_audio_block)
         try:
             self._recorder.start()
         except Exception as e:
             logging.exception("Recorder start failed")
+            self._set_state(DictationState.ERROR)
+            self._set_state(DictationState.IDLE)
             self.error_occurred.emit("Could not start microphone recording", str(e))
             return
         self._t_start = time.time()
-        self._is_recording = True
         self.started.emit()
+        self._max_session_timer.start(max(1, int(self.cfg.max_session_minutes)) * 60 * 1000)
 
-        self._stream_stop.clear()
-        self._stream_started = False
-        self._session_streaming = bool(self.cfg.streaming)
-        self._engine_load_error = None
-        self._engine_ready.clear()
+        session = self._session
         self._engine_thread = threading.Thread(
             target=self._load_engine_for_recording,
+            args=(session, self._recorder),
             name="EngineLoadThread",
             daemon=True,
         )
         self._engine_thread.start()
 
-    def _load_engine_for_recording(self) -> None:
+    def _load_engine_for_recording(
+        self,
+        session: DictationSession,
+        recorder: Recorder,
+    ) -> None:
         """Load the model off the UI thread, then start live streaming if still recording."""
         try:
             self.ensure_engine()
             if (
-                self._session_streaming
-                and not self._stream_stop.is_set()
-                and self._is_recording
-                and self._recorder is not None
-                and self._recorder.running
+                self._session is session
+                and session.streaming
+                and not session.stream_stop.is_set()
+                and self.is_recording
+                and recorder.running
             ):
-                self._engine.start_stream(
-                    language=self.cfg.language,
-                    on_delta=self._emit_delta,
-                    vad_filter=self.cfg.silence_removal,
-                    vocabulary=self.cfg.vocabulary,
+                with self._stream_operation_lock:
+                    self._engine.start_stream(
+                        language=self.cfg.language,
+                        on_delta=lambda delta, active=session: self._emit_delta_for_session(
+                            active,
+                            delta,
+                        ),
+                        vad_filter=self.cfg.silence_removal,
+                        vocabulary=self.cfg.vocabulary,
+                    )
+                session.stream_started = True
+                session.stream_thread = threading.Thread(
+                    target=self._stream_loop,
+                    args=(session, recorder),
+                    name=f"StreamThread-{session.id[:8]}",
+                    daemon=True,
                 )
-                self._stream_started = True
-                self._stream_thread = threading.Thread(target=self._stream_loop, name="StreamThread", daemon=True)
-                self._stream_thread.start()
+                session.stream_thread.start()
         except Exception as e:
-            self._engine_load_error = str(e)
+            session.engine_load_error = str(e)
             logging.exception("Failed to load or start the speech model")
-            if self._is_recording:
-                self._stream_stop.set()
-                if self._recorder:
+            if self._session is session and self.is_recording:
+                session.stream_stop.set()
+                if recorder.running:
                     try:
-                        self._recorder.stop()
+                        recorder.stop()
                     except Exception:
                         pass
+                if self._recorder is recorder:
                     self._recorder = None
-                self._is_recording = False
-                self.stopped.emit()
+                self._set_state(DictationState.ERROR)
+                self._set_state(DictationState.IDLE)
+                self._session = None
+                self.cancelled.emit()
             self.error_occurred.emit("Could not load the speech model", str(e))
         finally:
-            self._engine_ready.set()
+            session.engine_ready.set()
 
     def _resolve_device(self) -> Optional[int]:
         if not self.cfg.input_device:
@@ -191,13 +250,11 @@ class RecordingController(QObject):
         except Exception:
             pass
 
-    def _stream_loop(self) -> None:
-        if not self._recorder:
-            return
+    def _stream_loop(self, session: DictationSession, recorder: Recorder) -> None:
         accum: list[np.ndarray] = []
         last_push = time.time()
-        while not self._stream_stop.is_set() and self._recorder and self._recorder.running:
-            chunk = self._recorder.get_chunk(timeout=0.1)
+        while not session.stream_stop.is_set() and recorder.running:
+            chunk = recorder.get_chunk(timeout=0.1)
             if chunk is not None:
                 accum.append(chunk)
             now = time.time()
@@ -206,74 +263,104 @@ class RecordingController(QObject):
                 accum = []
                 last_push = now
                 try:
-                    self._engine.push_chunk(audio)
-                except Exception as e:
+                    with self._stream_operation_lock:
+                        if session.stream_stop.is_set():
+                            break
+                        self._engine.push_chunk(audio)
+                    session.stream_samples_pushed += audio.size
+                except Exception:
                     logging.exception("Streaming push_chunk failed")
 
-    def _emit_delta(self, delta: str) -> None:
-        if not delta:
+    def _emit_delta_for_session(self, session: DictationSession, delta: str) -> None:
+        if (
+            not delta
+            or self._session is not session
+            or self.state not in {DictationState.RECORDING, DictationState.PROCESSING}
+        ):
             return
         self.delta_ready.emit(delta)
 
     def cancel(self) -> None:
-        if not self._is_recording:
+        if not self.is_recording:
             return
-        self._stream_stop.set()
+        session = self._session
+        self._max_session_timer.stop()
+        if session is not None:
+            session.stream_stop.set()
         if self._recorder:
             self._recorder.stop()
             self._recorder = None
-        self._is_recording = False
-        self.stopped.emit()
+        self._set_state(DictationState.IDLE)
+        self._session = None
+        self.cancelled.emit()
 
     def stop(self) -> None:
-        if not self._is_recording:
+        if not self.is_recording or self._session is None:
             return
-        self._stream_stop.set()
+        session = self._session
+        self._max_session_timer.stop()
+        session.stream_stop.set()
         audio = np.zeros(0, dtype=np.float32)
         if self._recorder:
             audio = self._recorder.stop()
             self._recorder = None
-        self._is_recording = False
+        self._set_state(DictationState.PROCESSING)
         self.stopped.emit()
 
-        # Re-check focus right before finalizing. Detection at start can miss
-        # apps where UIA is slow to populate (Electron, freshly-focused fields).
-        # If the user is still on the same hwnd OR a different injectable one,
-        # update the target so injection actually happens.
+        # Refresh a child focus handle only while the same application/window
+        # remains active. Never deliver a completed dictation to an unrelated
+        # window that happened to gain focus while the model was processing.
         try:
             current = get_focus_info()
             same_target = bool(current.get("hwnd")) and int(current.get("hwnd") or 0) == self._target_hwnd
-            if current.get("can_inject") or (same_target and not self._injecting):
-                if current.get("hwnd"):
-                    self._target_hwnd = int(current.get("hwnd") or self._target_hwnd)
-                    self._target_focus_hwnd = int(current.get("focus_hwnd") or current.get("caret_hwnd") or self._target_focus_hwnd)
-                    self._target_app = current.get("process") or self._target_app
-                    self._target_title = current.get("title") or self._target_title
+            same_process = (
+                bool(current.get("process"))
+                and str(current.get("process")).lower() == str(self._target_app or "").lower()
+            )
+            if current.get("can_inject") and (same_target or same_process):
+                self._target_hwnd = int(current.get("hwnd") or self._target_hwnd)
+                self._target_focus_hwnd = int(
+                    current.get("focus_hwnd")
+                    or current.get("caret_hwnd")
+                    or self._target_focus_hwnd
+                )
+                self._target_title = current.get("title") or self._target_title
                 self._injecting = True
                 logging.info(
-                    "Stop: re-checked focus, can_inject=True target=%s hwnd=%s",
+                    "Stop: target still valid, can_inject=True target=%s hwnd=%s",
                     self._target_app,
                     self._target_hwnd,
                 )
             else:
+                self._injecting = bool(same_target and self._injecting)
                 logging.info(
-                    "Stop: re-checked focus, can_inject=%s target=%s",
+                    "Stop: target changed; safe injection=%s current=%s",
                     self._injecting,
                     current.get("process"),
                 )
         except Exception:
             logging.exception("Stop: focus re-check failed")
 
+        session.target_hwnd = self._target_hwnd
+        session.target_focus_hwnd = self._target_focus_hwnd
+        session.target_app = self._target_app
+        session.target_title = self._target_title
+        session.can_inject = self._injecting
         duration_ms = int((time.time() - self._t_start) * 1000)
 
         # Background finalize so UI doesn't block
         threading.Thread(
             target=self._finalize_in_background,
-            args=(audio, duration_ms),
+            args=(audio, duration_ms, session),
             daemon=True,
         ).start()
 
-    def _finalize_in_background(self, audio: np.ndarray, duration_ms: int) -> None:
+    def _finalize_in_background(
+        self,
+        audio: np.ndarray,
+        duration_ms: int,
+        session: DictationSession,
+    ) -> None:
         activity = analyze_audio_activity(audio)
         if not activity.has_voice:
             logging.info(
@@ -283,15 +370,20 @@ class RecordingController(QObject):
                 activity.peak,
                 activity.voiced_ratio,
             )
-            self.finalized.emit("", duration_ms)
+            self.finalized.emit(DictationResult(session=session, text="", duration_ms=duration_ms))
             return
 
         try:
-            self._wait_for_engine_ready()
-            if self._session_streaming:
-                self._join_stream_thread()
-                if self._stream_started:
-                    final_text = self._engine.finalize_stream()
+            self._wait_for_engine_ready(session)
+            if session.streaming:
+                self._join_stream_thread(session)
+                if session.stream_started:
+                    consumed = min(session.stream_samples_pushed, audio.size)
+                    with self._stream_operation_lock:
+                        if consumed < audio.size:
+                            self._engine.push_chunk(audio[consumed:])
+                            session.stream_samples_pushed = audio.size
+                        final_text = self._engine.finalize_stream()
                 else:
                     final_text = self._engine.transcribe_full(
                         audio,
@@ -316,27 +408,80 @@ class RecordingController(QObject):
             self.cfg.vocabulary_replacements,
             self.cfg.vocabulary,
         ).strip()
-        self.finalized.emit(text, duration_ms)
+        if not session.streaming:
+            text = process_transcript(
+                text,
+                spoken_commands=bool(session.mode.get("spoken_commands", self.cfg.spoken_commands)),
+                remove_filler_words=bool(session.mode.get("remove_fillers", self.cfg.remove_filler_words)),
+                smart_formatting=self.cfg.smart_formatting,
+            )
+        self.finalized.emit(
+            DictationResult(
+                session=session,
+                text=text,
+                duration_ms=duration_ms,
+                needs_recovery=bool(getattr(self._engine, "stream_needs_recovery", False)),
+            )
+        )
 
     def can_inject_now(self) -> bool:
-        return self._injecting
+        return bool(self._session and self._session.can_inject)
 
-    def _wait_for_engine_ready(self) -> None:
-        if not self._engine_ready.wait(timeout=120.0):
+    @property
+    def current_mode(self) -> dict:
+        return dict(self._session.mode) if self._session else {}
+
+    def _wait_for_engine_ready(self, session: DictationSession) -> None:
+        if not session.engine_ready.wait(timeout=120.0):
             raise RuntimeError("Speech model did not finish loading in time.")
-        if self._engine_load_error:
-            raise RuntimeError(self._engine_load_error)
+        if session.engine_load_error:
+            raise RuntimeError(session.engine_load_error)
         if self._engine is None:
             raise RuntimeError("Speech model is not available.")
 
-    def _join_stream_thread(self) -> None:
-        thread = self._stream_thread
+    def _join_stream_thread(self, session: DictationSession) -> None:
+        thread = session.stream_thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+            thread.join(timeout=120.0)
+            if thread.is_alive():
+                raise RuntimeError("Live transcription did not stop in time.")
 
     def invalidate_engine(self) -> None:
+        self._engine_idle_timer.stop()
         with self._engine_lock:
             self._engine_key = None
+
+    def mark_completed(self, session_id: str) -> None:
+        if self._session is None or self._session.id != session_id:
+            return
+        self._session = None
+        self._set_state(DictationState.IDLE, force=True)
+        minutes = max(0, int(self.cfg.model_keep_warm_minutes))
+        if minutes == 0:
+            self._unload_engine_if_idle()
+        else:
+            self._engine_idle_timer.start(minutes * 60 * 1000)
+
+    def _unload_engine_if_idle(self) -> None:
+        if self.is_busy:
+            return
+        with self._engine_lock:
+            if self._engine is not None:
+                try:
+                    self._engine.unload()
+                    logging.info("ASR engine unloaded after idle timeout")
+                except Exception:
+                    logging.exception("Could not unload idle ASR engine")
+                finally:
+                    self._engine = None
+                    self._engine_key = None
+
+    def shutdown(self) -> None:
+        self._max_session_timer.stop()
+        self._engine_idle_timer.stop()
+        if self.is_recording:
+            self.cancel()
+        self._unload_engine_if_idle()
 
     @property
     def target_hwnd(self) -> int:
@@ -361,6 +506,8 @@ class App(QObject):
     # threads do not run, because those threads do not own a Qt event loop.
     show_settings_requested = Signal()
     toggle_recording_requested = Signal()
+    start_recording_requested = Signal()
+    stop_recording_requested = Signal()
     cancel_recording_requested = Signal()
     copy_last_requested = Signal()
     paste_last_requested = Signal()
@@ -380,6 +527,7 @@ class App(QObject):
         self.controller.delta_ready.connect(self._on_delta)
         self.controller.started.connect(self._on_started)
         self.controller.stopped.connect(self._on_stopped)
+        self.controller.cancelled.connect(self._on_cancelled)
         self.controller.audio_level.connect(self._on_level)
         self.controller.finalized.connect(self._on_finalized)
         self.controller.error_occurred.connect(self._on_error)
@@ -402,6 +550,8 @@ class App(QObject):
         # and receiver live in different threads, which is exactly what we need.
         self.show_settings_requested.connect(self._do_show_settings)
         self.toggle_recording_requested.connect(self._do_toggle_recording)
+        self.start_recording_requested.connect(self._do_start_recording)
+        self.stop_recording_requested.connect(self._do_stop_recording)
         self.cancel_recording_requested.connect(self._do_cancel_recording)
         self.copy_last_requested.connect(self._do_copy_last)
         self.paste_last_requested.connect(self._do_paste_last)
@@ -415,7 +565,11 @@ class App(QObject):
         )
         self.tray.start()
 
-        self.hotkey = HotkeyManager(cfg.hotkey_toggle, self.toggle_recording_requested.emit)
+        self.hotkey = HotkeyManager(
+            cfg.hotkey_toggle,
+            self._on_record_hotkey_press,
+            self._on_record_hotkey_release,
+        )
         if not self.hotkey.start():
             QTimer.singleShot(500, self._warn_hotkey)
         self.cancel_hotkey: Optional[HotkeyManager] = None
@@ -428,6 +582,17 @@ class App(QObject):
                 cfg.hotkey_paste_last,
                 self.paste_hotkey.error,
             )
+        QTimer.singleShot(1500, self._cleanup_history)
+
+    def _on_record_hotkey_press(self) -> None:
+        if self.cfg.activation_mode == "push_to_talk":
+            self.start_recording_requested.emit()
+        else:
+            self.toggle_recording_requested.emit()
+
+    def _on_record_hotkey_release(self) -> None:
+        if self.cfg.activation_mode == "push_to_talk":
+            self.stop_recording_requested.emit()
 
     def _warn_hotkey(self):
         msg = QMessageBox(QMessageBox.Icon.Warning, "Hotkey conflict",
@@ -463,6 +628,13 @@ class App(QObject):
     def _do_toggle_recording(self) -> None:
         self.controller.toggle()
 
+    def _do_start_recording(self) -> None:
+        self.controller.start()
+
+    def _do_stop_recording(self) -> None:
+        if self.controller.is_recording:
+            self.controller.stop()
+
     def _do_cancel_recording(self) -> None:
         self.controller.cancel()
 
@@ -492,6 +664,10 @@ class App(QObject):
 
     def _do_quit(self) -> None:
         try:
+            self.controller.shutdown()
+        except Exception:
+            logging.exception("Controller shutdown failed")
+        try:
             self.hotkey.stop()
         except Exception:
             pass
@@ -516,9 +692,8 @@ class App(QObject):
         self._last_text_injected = False
         self.tray.set_state("recording")
         self._start_cancel_hotkey()
-        # Always show the overlay so the user has visual confirmation that
-        # recording started — even when text is being injected somewhere.
-        self.overlay.show_at_top_center()
+        if self.cfg.overlay_mode != "hidden":
+            self.overlay.show_at_top_center()
 
     def _on_stopped(self) -> None:
         self._stop_cancel_hotkey()
@@ -528,10 +703,24 @@ class App(QObject):
         self.tray.set_state("processing")
         self.overlay.fade_out_and_hide()
 
+    def _on_cancelled(self) -> None:
+        self._stop_cancel_hotkey()
+        if self.cfg.sound_effects:
+            sounds.play_cancel()
+        self.tray.set_state("ready")
+        self.overlay.fade_out_and_hide()
+
     def _on_level(self, level: float) -> None:
         self.overlay.set_audio_level(level)
 
     def _on_delta(self, delta: str) -> None:
+        mode = self.controller.current_mode
+        delta = process_stream_delta(
+            delta,
+            spoken_commands=bool(mode.get("spoken_commands", self.cfg.spoken_commands)),
+        )
+        if not delta:
+            return
         if self.controller.can_inject_now():
             try:
                 self._inject_text(delta)
@@ -633,32 +822,50 @@ class App(QObject):
         QTimer.singleShot(900, restore_later)
         return sent
 
-    def _on_finalized(self, text: str, duration_ms: int) -> None:
+    def _on_finalized(self, result: DictationResult) -> None:
+        session = result.session
+        text = result.text
+        duration_ms = result.duration_ms
         logging.info("Finalized transcription: duration_ms=%s chars=%s", duration_ms, len(text or ""))
-        if text and self.controller.can_inject_now() and not self._last_text_injected:
+        output_action = str(session.mode.get("output_action") or self.cfg.output_action)
+        should_insert = output_action in {"insert", "insert_enter"}
+        if text and session.can_inject and should_insert and not self._last_text_injected:
             try:
-                self._inject_text(text)
+                self._inject_text_into(
+                    text,
+                    session.target_hwnd,
+                    session.target_focus_hwnd,
+                    session.target_app,
+                    session.target_title,
+                )
             except Exception as e:
                 self._last_text_injected = False
                 logging.exception("Final text injection failed")
                 self._on_error("Text injection failed", str(e))
+        if text and output_action == "clipboard":
+            QApplication.clipboard().setText(text)
+        if text and output_action == "insert_enter" and self._last_text_injected:
+            QTimer.singleShot(80, press_enter)
         if text:
             self._last_entry_text = text
-            try:
-                storage.add_transcription(
-                    text=text,
-                    duration_ms=duration_ms,
-                    model=self.cfg.model,
-                    target_app=self.controller.target_app,
-                    target_window_title=self.controller.target_title,
-                    injected=self._last_text_injected,
-                    save_dir=self.cfg.save_dir,
-                )
-            except Exception:
-                logging.exception("Save failed")
+            if not self.cfg.private_mode:
+                try:
+                    storage.add_transcription(
+                        text=text,
+                        duration_ms=duration_ms,
+                        model=self.cfg.model,
+                        target_app=session.target_app,
+                        target_window_title=session.target_title,
+                        injected=self._last_text_injected,
+                        save_dir=self.cfg.save_dir,
+                        mode=str(session.mode.get("id") or "default"),
+                    )
+                except Exception:
+                    logging.exception("Save failed")
         # Only show overlay if injection failed or was never attempted.
         # Injection success is tracked across all deltas in self._last_text_injected.
-        if text and not self._last_text_injected:
+        delivered_to_clipboard = output_action == "clipboard"
+        if text and (result.needs_recovery or not self._last_text_injected) and not delivered_to_clipboard:
             self.overlay.show_result_text(text)
         # Brief "complete" flash on the tray (auto-resets to ready)
         self.tray.flash_complete()
@@ -666,6 +873,21 @@ class App(QObject):
             self.window.page_history.refresh_async()
         except Exception:
             pass
+        finally:
+            self.controller.mark_completed(session.id)
+
+    def _cleanup_history(self) -> None:
+        if self.cfg.history_retention_days <= 0:
+            return
+        try:
+            result = storage.cleanup_old(
+                self.cfg.history_retention_days,
+                save_dir=self.cfg.save_dir,
+            )
+            if result["rows_deleted"] or result["files_deleted"]:
+                logging.info("History retention cleanup: %s", result)
+        except Exception:
+            logging.exception("History retention cleanup failed")
 
     def _start_cancel_hotkey(self) -> None:
         self._stop_cancel_hotkey()
@@ -709,6 +931,14 @@ def main() -> int:
     qapp = QApplication.instance() or QApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
     qapp.setApplicationName("LocalWhisper")
+    instance_lock = SingleInstance()
+    if not instance_lock.acquire():
+        QMessageBox.information(
+            None,
+            "LocalWhisper is already running",
+            "LocalWhisper is already active in the system tray.",
+        )
+        return 0
 
     # App icon used by Qt for window title bar, alt-tab and taskbar.
     from PySide6.QtGui import QIcon, QImageReader
@@ -723,6 +953,11 @@ def main() -> int:
     if not qicon.isNull():
         qapp.setWindowIcon(qicon)
 
+    if not cfg.onboarding_complete:
+        from .ui.onboarding import OnboardingDialog
+
+        OnboardingDialog(cfg).exec()
+
     app = App(qapp, cfg)
     if not qicon.isNull():
         app.window.setWindowIcon(qicon)
@@ -730,7 +965,10 @@ def main() -> int:
     # On first launch, show window so the user sees something happen
     app.window.show()
 
-    return qapp.exec()
+    try:
+        return qapp.exec()
+    finally:
+        instance_lock.release()
 
 
 if __name__ == "__main__":

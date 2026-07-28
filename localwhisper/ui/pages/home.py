@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from ... import __version__, storage
 from ...config import Config
 from ..widgets.card import Card
 
@@ -51,11 +52,15 @@ class HomePage(QWidget):
         self.metric_hotkey = self._metric("Hotkey", self._fmt_hotkey())
         self.metric_model = self._metric("Model", cfg.model)
         self.metric_language = self._metric("Language", self._fmt_language())
-        self.metric_mode = self._metric("Insertion", self._fmt_streaming())
+        self.metric_mode = self._metric("Writing mode", self._fmt_mode())
+        self.metric_words = self._metric("Words · 30 days", "—")
+        self.metric_saved = self._metric("Estimated time saved", "—")
         metrics.addWidget(self.metric_hotkey, 0, 0)
         metrics.addWidget(self.metric_model, 0, 1)
         metrics.addWidget(self.metric_language, 1, 0)
         metrics.addWidget(self.metric_mode, 1, 1)
+        metrics.addWidget(self.metric_words, 2, 0)
+        metrics.addWidget(self.metric_saved, 2, 1)
         v.addLayout(metrics)
 
         card = Card()
@@ -66,11 +71,18 @@ class HomePage(QWidget):
         self.lbl_paste_hotkey.setObjectName("Pill")
         self.lbl_startup = QLabel(self._fmt_startup())
         self.lbl_startup.setObjectName("PillGood")
+        self.lbl_privacy = QLabel("Private" if self.cfg.private_mode else "Local history")
+        self.lbl_privacy.setObjectName("Pill" if self.cfg.private_mode else "PillGood")
+        self.lbl_version = QLabel(__version__)
+        self.lbl_version.setObjectName("Pill")
         card.add_row("Save folder", self.lbl_save_dir)
         card.add_row("Paste last", self.lbl_paste_hotkey)
         card.add_row("Startup", self.lbl_startup)
+        card.add_row("Privacy", self.lbl_privacy)
+        card.add_row("Version", self.lbl_version)
         v.addWidget(card)
         v.addStretch(1)
+        self.refresh()
 
     def _metric(self, label: str, value: str) -> QFrame:
         frame = QFrame()
@@ -102,6 +114,12 @@ class HomePage(QWidget):
     def _fmt_streaming(self) -> str:
         return "Live streaming" if self.cfg.streaming else "After stop"
 
+    def _fmt_mode(self) -> str:
+        for mode in self.cfg.dictation_modes:
+            if mode.get("id") == self.cfg.active_mode_id:
+                return str(mode.get("name") or self.cfg.active_mode_id)
+        return self.cfg.active_mode_id
+
     def _fmt_startup(self) -> str:
         return "Enabled" if self.cfg.auto_launch else "Manual"
 
@@ -113,8 +131,22 @@ class HomePage(QWidget):
         self.metric_hotkey.value_label.setText(self._fmt_hotkey())  # type: ignore[attr-defined]
         self.metric_model.value_label.setText(self.cfg.model)  # type: ignore[attr-defined]
         self.metric_language.value_label.setText(self._fmt_language())  # type: ignore[attr-defined]
-        self.metric_mode.value_label.setText(self._fmt_streaming())  # type: ignore[attr-defined]
+        self.metric_mode.value_label.setText(self._fmt_mode())  # type: ignore[attr-defined]
+        try:
+            summary = storage.stats(30)
+            self.metric_words.value_label.setText(f"{summary['words']:,}")  # type: ignore[attr-defined]
+            typed_minutes = summary["words"] / 45.0
+            saved_minutes = max(0.0, typed_minutes - summary["duration_minutes"])
+            if saved_minutes >= 60:
+                saved = f"{int(saved_minutes // 60)}h {int(saved_minutes % 60)}m"
+            else:
+                saved = f"{int(round(saved_minutes))} min"
+            self.metric_saved.value_label.setText(saved)  # type: ignore[attr-defined]
+        except Exception:
+            self.metric_words.value_label.setText("—")  # type: ignore[attr-defined]
+            self.metric_saved.value_label.setText("—")  # type: ignore[attr-defined]
         self.lbl_save_dir.setText(self.cfg.save_dir)
         self.lbl_paste_hotkey.setText(self._fmt_paste_hotkey())
         self.lbl_startup.setText(self._fmt_startup())
+        self.lbl_privacy.setText("Private" if self.cfg.private_mode else "Local history")
         self.subtitle.setText(self._subtitle_text())

@@ -24,10 +24,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
-import struct
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -59,42 +60,124 @@ class FFmpegMissingError(RuntimeError):
     pass
 
 
-def decode_to_pcm16k(path: str | os.PathLike) -> np.ndarray:
-    """Decode any audio/video file to mono float32 @ 16 kHz using ffmpeg."""
+class FileTranscriptionCancelled(RuntimeError):
+    pass
+
+
+class CancellationToken:
+    def __init__(self):
+        self._event = threading.Event()
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def raise_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise FileTranscriptionCancelled("Transcription cancelled.")
+
+
+def probe_duration(path: str | os.PathLike) -> float | None:
+    """Read media duration from ffmpeg metadata without decoding the file."""
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg:
+        return None
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    proc = subprocess.run(
+        [ffmpeg, "-nostdin", "-hide_banner", "-i", str(path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+        creationflags=creationflags,
+    )
+    match = re.search(
+        rb"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+        proc.stderr or b"",
+    )
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def iter_pcm16k(
+    path: str | os.PathLike,
+    *,
+    chunk_seconds: float = 30.0,
+    cancel_token: CancellationToken | None = None,
+):
+    """Yield bounded mono float32 chunks decoded by one ffmpeg process."""
     src = str(path)
     if not Path(src).exists():
         raise FileNotFoundError(src)
-
     ffmpeg = _ffmpeg_path()
     if not ffmpeg:
         raise FFmpegMissingError(
             "ffmpeg was not found on PATH. Install ffmpeg from https://ffmpeg.org "
             "or `pip install imageio-ffmpeg`."
         )
-
     cmd = [
         ffmpeg,
         "-nostdin",
         "-loglevel", "error",
         "-i", src,
-        "-f", "s16le",      # 16-bit signed little-endian PCM
+        "-f", "s16le",
         "-acodec", "pcm_s16le",
-        "-ac", "1",         # mono
+        "-ac", "1",
         "-ar", str(SAMPLE_RATE),
-        "-",                # stdout
+        "-",
     ]
-    logging.info("ffmpeg decode: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, check=False)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg failed (code {proc.returncode}): {proc.stderr.decode('utf-8', 'replace')[:500]}"
-        )
-    raw = proc.stdout
-    if not raw:
+    logging.info("ffmpeg streaming decode: %s", " ".join(cmd))
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creationflags,
+    )
+    bytes_per_chunk = max(2, int(chunk_seconds * SAMPLE_RATE) * 2)
+    bytes_per_chunk -= bytes_per_chunk % 2
+    try:
+        assert proc.stdout is not None
+        while True:
+            if cancel_token:
+                cancel_token.raise_if_cancelled()
+            raw = proc.stdout.read(bytes_per_chunk)
+            if not raw:
+                break
+            if len(raw) % 2:
+                raw = raw[:-1]
+            if raw:
+                yield np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        stderr = proc.stderr.read() if proc.stderr is not None else b""
+        return_code = proc.wait()
+        if return_code != 0:
+            raise RuntimeError(
+                f"ffmpeg failed (code {return_code}): "
+                f"{stderr.decode('utf-8', 'replace')[:500]}"
+            )
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def decode_to_pcm16k(
+    path: str | os.PathLike,
+    *,
+    cancel_token: CancellationToken | None = None,
+) -> np.ndarray:
+    """Decode any audio/video file to mono float32 @ 16 kHz using ffmpeg."""
+    chunks = list(iter_pcm16k(path, chunk_seconds=60.0, cancel_token=cancel_token))
+    if not chunks:
         raise RuntimeError("ffmpeg produced no audio (file empty or unreadable).")
-    # int16 → float32 normalized to [-1, 1]
-    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    return samples
+    return np.concatenate(chunks)
 
 
 # ─── data structures ───────────────────────────────────────────────────────
@@ -166,6 +249,28 @@ class FileTranscript:
             indent=2,
         )
 
+    def to_srt(self) -> str:
+        blocks = []
+        for index, segment in enumerate(self.segments, 1):
+            label = f"[{segment.speaker}] " if segment.speaker else ""
+            blocks.append(
+                f"{index}\n{_fmt_subtitle_ts(segment.start, srt=True)} --> "
+                f"{_fmt_subtitle_ts(segment.end, srt=True)}\n"
+                f"{label}{segment.text.strip()}"
+            )
+        return "\n\n".join(blocks).strip() + ("\n" if blocks else "")
+
+    def to_vtt(self) -> str:
+        blocks = ["WEBVTT", ""]
+        for segment in self.segments:
+            label = f"<v {segment.speaker}>" if segment.speaker else ""
+            blocks.append(
+                f"{_fmt_subtitle_ts(segment.start, srt=False)} --> "
+                f"{_fmt_subtitle_ts(segment.end, srt=False)}\n"
+                f"{label}{segment.text.strip()}"
+            )
+        return "\n\n".join(blocks).rstrip() + "\n"
+
 
 def _fmt_ts(t: float) -> str:
     h = int(t // 3600)
@@ -174,6 +279,15 @@ def _fmt_ts(t: float) -> str:
     if h:
         return f"{h:02d}:{m:02d}:{s:05.2f}"
     return f"{m:02d}:{s:05.2f}"
+
+
+def _fmt_subtitle_ts(value: float, *, srt: bool) -> str:
+    milliseconds = max(0, int(round(value * 1000)))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1000)
+    separator = "," if srt else "."
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}{separator}{millis:03d}"
 
 
 # ─── speaker stitching ─────────────────────────────────────────────────────
@@ -231,6 +345,8 @@ def transcribe_file(
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None,
     on_progress: Optional[ProgressFn] = None,
+    cancel_token: CancellationToken | None = None,
+    chunk_seconds: float = 30.0,
 ) -> FileTranscript:
     """High-level entry point used by the UI page.
 
@@ -248,21 +364,25 @@ def transcribe_file(
             except Exception:
                 pass
 
-    _progress("Decoding audio…", 0.0)
-    audio = decode_to_pcm16k(path)
-    duration = audio.size / SAMPLE_RATE
-    _progress(f"Decoded {duration:.1f}s of audio", 0.10)
+    token = cancel_token or CancellationToken()
+    token.raise_if_cancelled()
+    duration_hint = probe_duration(path)
 
     # ─ diarization (optional, can be slow) ──────────────────────────────
     raw_turns: list[tuple[float, float, str]] = []
     diarized = False
     if diarize:
+        _progress("Decoding audio for speaker identification…", 0.0)
+        audio = decode_to_pcm16k(path, cancel_token=token)
+        duration = audio.size / SAMPLE_RATE
+        _progress(f"Decoded {duration:.1f}s of audio", 0.10)
         try:
             from .diarization import DiarizationPipeline
 
             _progress("Loading speaker diarization model…", 0.15)
             pipeline = DiarizationPipeline(hf_token=hf_token)
             pipeline.load()
+            token.raise_if_cancelled()
             _progress("Identifying speakers (this can take a while)…", 0.20)
             raw_turns = pipeline.diarize(
                 audio,
@@ -271,18 +391,46 @@ def transcribe_file(
                 max_speakers=max_speakers,
             )
             diarized = True
+            token.raise_if_cancelled()
             _progress(f"Found {len({s for *_, s in raw_turns})} speaker(s)", 0.55)
+        except FileTranscriptionCancelled:
+            raise
         except Exception as exc:
             logging.exception("Diarization failed; continuing without speaker labels")
             _progress(f"Diarization unavailable ({exc}). Continuing without speakers…", 0.55)
             raw_turns = []
             diarized = False
+        turns, _label_map = _normalize_speaker_labels(raw_turns)
+        _progress("Transcribing audio…", 0.60)
+        token.raise_if_cancelled()
+        asr_segments = _transcribe_with_timestamps(engine, audio, language=language)
+    else:
+        turns = []
+        asr_segments = []
+        processed = 0.0
+        duration = float(duration_hint or 0.0)
+        _progress("Streaming audio into the speech model…", 0.05)
+        for chunk in iter_pcm16k(
+            path,
+            chunk_seconds=chunk_seconds,
+            cancel_token=token,
+        ):
+            token.raise_if_cancelled()
+            chunk_duration = chunk.size / SAMPLE_RATE
+            for segment in _transcribe_with_timestamps(engine, chunk, language=language):
+                asr_segments.append(
+                    {
+                        "start": float(segment["start"]) + processed,
+                        "end": float(segment["end"]) + processed,
+                        "text": segment["text"],
+                    }
+                )
+            processed += chunk_duration
+            duration = max(duration, processed)
+            pct = min(0.94, 0.05 + (processed / duration_hint) * 0.89) if duration_hint else -1.0
+            _progress(f"Transcribed {processed / 60:.1f} min", pct)
+        token.raise_if_cancelled()
 
-    turns, _label_map = _normalize_speaker_labels(raw_turns)
-
-    # ─ transcription with word-level timestamps ─────────────────────────
-    _progress("Transcribing audio…", 0.60)
-    asr_segments = _transcribe_with_timestamps(engine, audio, language=language)
     _progress("Stitching speakers and text…", 0.95)
 
     # ─ stitch ───────────────────────────────────────────────────────────

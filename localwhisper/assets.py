@@ -6,7 +6,6 @@ from pathlib import Path
 
 from PIL import Image
 
-
 APP_ICON_FILES = (
     "icon.ico",
     "icon.png",

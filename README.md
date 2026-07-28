@@ -1,17 +1,26 @@
 # LocalWhisper
 
-App de ditado offline para Windows que roda na sua RTX 5070, com hotkey global, overlay
-estilo macOS e injeção de texto direto na janela focada.
+App de ditado offline para Windows com hotkey global, perfis por aplicativo,
+streaming estável e injeção de texto direto na janela focada. O áudio e o texto
+ficam no computador.
 
 - **Hotkey global**: `Ctrl+Space` (configurável)
+- **Toggle ou push-to-talk**: pressione para iniciar/parar ou segure enquanto fala
 - **Modelos suportados**: Whisper Turbo (`large-v3-turbo`), Parakeet v3 Multilingual, Whisper Ultra (`large-v3`)
-- **Streaming ao vivo** (palavras aparecem conforme você fala) **ou final-dump** (texto inteiro ao parar)
+- **Streaming ao vivo estável** com consenso entre hipóteses, recuperação segura e cadência adaptativa
+- **Perfis de escrita**: Natural, Verbatim, AI Prompt, Email, Chat e perfis personalizados
+- **Ativação por app**: um perfil pode entrar automaticamente no Outlook, Slack, Codex, navegador etc.
+- **Ações de saída**: inserir, inserir e enviar, copiar ou salvar apenas no histórico
+- **Comandos falados** e limpeza local de hesitações, sem depender de API externa
 - **System tray** com menu Settings / Record manually / Quit
 - **Copy last entry no tray**: clique direito no ícone e copie a última transcrição mesmo se o overlay não aparecer
-- **History** dos últimos 7 dias com busca, espelhado em arquivos `.txt` por dia
-- **Transcribe File**: transcreve arquivos de áudio/vídeo (mp3, mp4, wav, mkv...) com identificação de falantes (diarização) via pyannote
+- **History** pesquisável com favoritos, métricas, retenção configurável e exportação Markdown/JSON
+- **Modo privado**: dita sem gravar no histórico
+- **Transcribe File**: fila de áudio/vídeo, processamento em lote, cancelamento real, diarização e exportação TXT/SRT/VTT/JSON
 - **Model manager**: instala/desinstala modelos e permite escolher a pasta de cache
 - **Correções de vocabulário**: regras locais do tipo `cloud -> CLAUDE`
+- **Onboarding e Diagnostics**: primeira configuração guiada e relatório de suporte sem segredos
+- **CLI completa**: gravação, arquivos, lotes, histórico, estatísticas e diagnóstico
 
 ## Requisitos
 
@@ -72,6 +81,7 @@ O instalador oficial `install.ps1` deve ser preferido a comandos manuais. Ele:
 - cria o atalho `LocalWhisper.lnk` na Área de Trabalho;
 - cria o atalho de inicialização em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`;
 - roda um smoke test de imports.
+- executa diagnóstico de configuração, banco, ffmpeg, dependências e CUDA;
 
 Depois de instalar, valide assim:
 
@@ -125,6 +135,8 @@ Flags úteis:
 .\install.ps1 -ForceCpu      # forçar PyTorch CPU mesmo com GPU
 .\install.ps1 -CudaIndex https://download.pytorch.org/whl/cu128   # índice manual
 .\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"      # venv fora do source
+.\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv" -Check   # diagnóstico sem reinstalar
+.\install.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv" -Repair  # repara pacote e atalhos
 ```
 
 > Se o PowerShell bloquear o script, abra um terminal como administrador uma vez e rode
@@ -191,14 +203,29 @@ A diarização roda 100% local depois do download inicial (~70 MB).
 # Ou normal (com console pra ver logs):
 python run.py
 
-# Testar a transcrição via CLI (gravação de 5s)
-python run.py --cli --duration 5 --model whisper-turbo
-python run.py --cli --duration 5 --model parakeet-v3
-python run.py --cli --duration 5 --model whisper-ultra
+# Gravar 5 segundos e imprimir o texto
+python run.py record --duration 5 --model whisper-turbo
+
+# Transcrever um arquivo
+python run.py transcribe reuniao.mp4 --format txt -o reuniao.txt
+
+# Transcrever um lote reutilizando o modelo; -o vira a pasta de saída
+python run.py transcribe aula-1.mp4 aula-2.mp4 --format srt -o .\legendas
+
+# Histórico e estatísticas
+python run.py history list --days 30 --query projeto
+python run.py history stats --days 30 --json
+python run.py history export historico.md --days 90
 
 # Listar modelos
-python run.py --list-models
+python run.py models
+
+# Diagnóstico legível ou JSON
+python run.py doctor
+python run.py doctor --json
 ```
+
+Os switches antigos `--cli`, `--list-models` e `--doctor` continuam aceitos.
 
 ## Verificação rápida
 
@@ -213,6 +240,7 @@ python -c "from faster_whisper import WhisperModel; m = WhisperModel('large-v3-t
 ## Onde os arquivos vivem
 
 - Config: `%APPDATA%\LocalWhisper\config.json`
+- Segredos: `%LOCALAPPDATA%\LocalWhisper\secrets.json` (criptografados com Windows DPAPI)
 - Histórico (SQLite): `%APPDATA%\LocalWhisper\history.db`
 - Runtime Python opcional: `%LOCALAPPDATA%\LocalWhisper\venv`
 - Modelos baixados: `%LOCALAPPDATA%\LocalWhisper\models`
@@ -233,6 +261,11 @@ python -c "from faster_whisper import WhisperModel; m = WhisperModel('large-v3-t
 4. Se o foco está no Desktop / Taskbar, um overlay preto aparece no topo central
    mostrando que está gravando. O texto vai para o histórico.
 5. `Ctrl+Space` de novo → o engine finaliza e (em final-dump mode) injeta o resultado.
+
+O streaming nunca sobrescreve texto que já foi inserido. Ele só confirma
+prefixos estáveis entre hipóteses consecutivas; se o resultado final divergir,
+o texto completo aparece no overlay para recuperação, em vez de anexar um
+sufixo incorreto.
 
 Gravações silenciosas são descartadas antes de chamar o modelo, evitando frases
 inventadas como "E aí" quando o microfone capturou pouco ou nenhum áudio.
