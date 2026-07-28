@@ -198,6 +198,11 @@ class Config:
             self.dictation_modes.extend(
                 mode for mode in defaults if str(mode.get("id")) not in known
             )
+        if previous_schema < CURRENT_SCHEMA_VERSION:
+            # Onboarding is for first installs. Existing users already have a
+            # working microphone/hotkey setup and should not be interrupted by
+            # an upgrade dialog.
+            self.onboarding_complete = True
         self.schema_version = CURRENT_SCHEMA_VERSION
         if not self.vocabulary_replacements:
             vocab = {str(w).strip().lower() for w in self.vocabulary if str(w).strip()}

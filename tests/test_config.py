@@ -63,6 +63,7 @@ def test_legacy_plaintext_token_is_migrated(monkeypatch, tmp_path):
     assert cfg.hf_token == "hf_legacy_secret"
     assert "hf_legacy_secret" not in path.read_text(encoding="utf-8")
     assert cfg.schema_version == CURRENT_SCHEMA_VERSION
+    assert cfg.onboarding_complete is True
 
 
 def test_invalid_writing_profiles_are_normalized(monkeypatch, tmp_path):
