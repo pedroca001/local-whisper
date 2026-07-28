@@ -47,6 +47,7 @@ class RecordingOverlay(QWidget):
         self._opacity_anim = QPropertyAnimation(self, b"windowOpacity")
         self._opacity_anim.setDuration(180)
         self._opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._hide_after_fade_connected = False
 
     def _build_recording_page(self) -> QWidget:
         page = QWidget()
@@ -188,10 +189,17 @@ class RecordingOverlay(QWidget):
         p.end()
 
     def _disconnect_anim_finished(self) -> None:
+        if not self._hide_after_fade_connected:
+            return
         try:
-            self._opacity_anim.finished.disconnect(self.hide)
+            self._opacity_anim.finished.disconnect(self._hide_after_fade)
         except (RuntimeError, TypeError):
             pass
+        self._hide_after_fade_connected = False
+
+    def _hide_after_fade(self) -> None:
+        self._disconnect_anim_finished()
+        self.hide()
 
     def _move_top_center(self) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -246,7 +254,8 @@ class RecordingOverlay(QWidget):
         self._disconnect_anim_finished()
         self._opacity_anim.setStartValue(self.windowOpacity())
         self._opacity_anim.setEndValue(0.0)
-        self._opacity_anim.finished.connect(self.hide)
+        self._opacity_anim.finished.connect(self._hide_after_fade)
+        self._hide_after_fade_connected = True
         self._opacity_anim.start()
 
     def focusOutEvent(self, event):

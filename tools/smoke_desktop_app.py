@@ -22,6 +22,10 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)
     product = App(app, cfg)
     product.window.show()
+    QTimer.singleShot(100, product.overlay.show_at_top_center)
+    QTimer.singleShot(350, product.overlay.fade_out_and_hide)
+    QTimer.singleShot(700, product.overlay.show_at_top_center)
+    QTimer.singleShot(950, product.overlay.fade_out_and_hide)
     QTimer.singleShot(1500, product._do_quit)
     return app.exec()
 
