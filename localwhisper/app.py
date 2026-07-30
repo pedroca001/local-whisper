@@ -30,10 +30,28 @@ from .injector import (
     snapshot_clipboard,
     type_unicode,
 )
-from .insertion_policy import input_events_succeeded, target_prefers_clipboard
-from .session import DictationResult, DictationSession, DictationState, SessionState
+from .insertion_policy import (
+    enter_target_is_still_safe,
+    input_events_succeeded,
+    target_prefers_clipboard,
+)
+from .session import (
+    DictationResult,
+    DictationSession,
+    DictationState,
+    SessionState,
+    shutdown_disposition,
+)
 from .single_instance import SingleInstance
-from .text_processing import mode_for_target, process_stream_delta, process_transcript
+from .text_processing import (
+    mode_for_target,
+    output_action_allows_insertion,
+    process_stream_delta,
+    process_transcript,
+    resolve_output_action,
+    should_process_final_transcript,
+    should_submit_enter,
+)
 from .transcriber import get_engine
 from .tray import TrayIcon
 from .ui.overlay_recording import RecordingOverlay
@@ -403,12 +421,18 @@ class RecordingController(QObject):
             self.error_occurred.emit("Transcription failed", str(e))
             final_text = ""
 
+        needs_recovery = bool(getattr(self._engine, "stream_needs_recovery", False))
         text = apply_replacements(
             (final_text or "").strip(),
             self.cfg.vocabulary_replacements,
             self.cfg.vocabulary,
         ).strip()
-        if not session.streaming:
+        output_action = resolve_output_action(session.mode, self.cfg.output_action)
+        if should_process_final_transcript(
+            streaming=session.streaming,
+            output_action=output_action,
+            needs_recovery=needs_recovery,
+        ):
             text = process_transcript(
                 text,
                 spoken_commands=bool(session.mode.get("spoken_commands", self.cfg.spoken_commands)),
@@ -420,7 +444,7 @@ class RecordingController(QObject):
                 session=session,
                 text=text,
                 duration_ms=duration_ms,
-                needs_recovery=bool(getattr(self._engine, "stream_needs_recovery", False)),
+                needs_recovery=needs_recovery,
             )
         )
 
@@ -522,6 +546,8 @@ class App(QObject):
         self._clipboard_restore_snapshot: ClipboardSnapshot | None = None
         self._clipboard_restore_pending = False
         self._clipboard_restore_generation = 0
+        self._enter_pending = False
+        self._quit_pending = False
 
         self.controller = RecordingController(cfg)
         self.controller.delta_ready.connect(self._on_delta)
@@ -663,6 +689,29 @@ class App(QObject):
         self.window.activateWindow()
 
     def _do_quit(self) -> None:
+        disposition = shutdown_disposition(
+            self.controller.state,
+            post_delivery_pending=(
+                self._enter_pending or self._clipboard_restore_pending
+            ),
+        )
+        if disposition == "defer":
+            self._quit_pending = True
+            logging.info(
+                "Quit deferred until the active transcription is finalized and saved"
+            )
+            return
+        self._quit_pending = False
+        if disposition == "cancel":
+            self.controller.cancel()
+        if not self.window.shutdown():
+            logging.warning("Quit deferred because a background job is still stopping")
+            QMessageBox.warning(
+                self.window,
+                "LocalWhisper is still finishing",
+                "A background transcription is still stopping. Please wait a moment and quit again.",
+            )
+            return
         try:
             self.controller.shutdown()
         except Exception:
@@ -684,6 +733,17 @@ class App(QObject):
         except Exception:
             pass
         self.qapp.quit()
+
+    def _resume_pending_quit(self) -> None:
+        if not self._quit_pending:
+            return
+        if shutdown_disposition(
+            self.controller.state,
+            post_delivery_pending=(
+                self._enter_pending or self._clipboard_restore_pending
+            ),
+        ) != "defer":
+            QTimer.singleShot(0, self._do_quit)
 
     # ---- Recording lifecycle ----
     def _on_started(self) -> None:
@@ -715,6 +775,10 @@ class App(QObject):
 
     def _on_delta(self, delta: str) -> None:
         mode = self.controller.current_mode
+        output_action = resolve_output_action(mode, self.cfg.output_action)
+        if not output_action_allows_insertion(output_action):
+            logging.debug("Streaming delta retained for %s output", output_action)
+            return
         delta = process_stream_delta(
             delta,
             spoken_commands=bool(mode.get("spoken_commands", self.cfg.spoken_commands)),
@@ -816,6 +880,7 @@ class App(QObject):
                 if generation == self._clipboard_restore_generation:
                     self._clipboard_restore_snapshot = None
                     self._clipboard_restore_pending = False
+                    self._resume_pending_quit()
 
         self._clipboard_restore_generation += 1
         generation = self._clipboard_restore_generation
@@ -827,8 +892,8 @@ class App(QObject):
         text = result.text
         duration_ms = result.duration_ms
         logging.info("Finalized transcription: duration_ms=%s chars=%s", duration_ms, len(text or ""))
-        output_action = str(session.mode.get("output_action") or self.cfg.output_action)
-        should_insert = output_action in {"insert", "insert_enter"}
+        output_action = resolve_output_action(session.mode, self.cfg.output_action)
+        should_insert = output_action_allows_insertion(output_action)
         if text and session.can_inject and should_insert and not self._last_text_injected:
             try:
                 self._inject_text_into(
@@ -844,8 +909,22 @@ class App(QObject):
                 self._on_error("Text injection failed", str(e))
         if text and output_action == "clipboard":
             QApplication.clipboard().setText(text)
-        if text and output_action == "insert_enter" and self._last_text_injected:
-            QTimer.singleShot(80, press_enter)
+        if text and should_submit_enter(
+            output_action=output_action,
+            can_inject=session.can_inject,
+            injected=self._last_text_injected,
+            needs_recovery=result.needs_recovery,
+        ):
+            self._enter_pending = True
+
+            def submit_enter(active: DictationSession = session) -> None:
+                try:
+                    self._press_enter_if_safe(active)
+                finally:
+                    self._enter_pending = False
+                    self._resume_pending_quit()
+
+            QTimer.singleShot(80, submit_enter)
         if text:
             self._last_entry_text = text
             if not self.cfg.private_mode:
@@ -864,17 +943,53 @@ class App(QObject):
                     logging.exception("Save failed")
         # Only show overlay if injection failed or was never attempted.
         # Injection success is tracked across all deltas in self._last_text_injected.
-        delivered_to_clipboard = output_action == "clipboard"
-        if text and (result.needs_recovery or not self._last_text_injected) and not delivered_to_clipboard:
+        delivered_without_insertion = output_action in {"clipboard", "history"}
+        if (
+            text
+            and (result.needs_recovery or not self._last_text_injected)
+            and not delivered_without_insertion
+        ):
             self.overlay.show_result_text(text)
         # Brief "complete" flash on the tray (auto-resets to ready)
         self.tray.flash_complete()
         try:
-            self.window.page_history.refresh_async()
+            self.window.page_history.invalidate_and_refresh()
         except Exception:
             pass
         finally:
             self.controller.mark_completed(session.id)
+            self._resume_pending_quit()
+
+    def _press_enter_if_safe(self, session: DictationSession) -> None:
+        """Send Enter only while the exact captured editable window remains active."""
+        try:
+            current = get_focus_info()
+            if not enter_target_is_still_safe(
+                current,
+                target_hwnd=session.target_hwnd,
+                target_app=session.target_app,
+            ):
+                logging.warning(
+                    "Skipped Enter because dictation target changed: expected=%s current=%s",
+                    session.target_hwnd,
+                    current.get("hwnd"),
+                )
+                return
+            if not activate_window(session.target_hwnd, session.target_focus_hwnd):
+                logging.warning("Skipped Enter because target activation failed")
+                return
+            confirmed = get_focus_info()
+            if not enter_target_is_still_safe(
+                confirmed,
+                target_hwnd=session.target_hwnd,
+                target_app=session.target_app,
+            ):
+                logging.warning("Skipped Enter because target changed during activation")
+                return
+            release_modifiers()
+            press_enter()
+        except Exception:
+            logging.exception("Could not safely press Enter after dictation")
 
     def _cleanup_history(self) -> None:
         if self.cfg.history_retention_days <= 0:

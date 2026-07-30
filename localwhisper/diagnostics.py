@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import re
 import sys
 import threading
 import traceback
@@ -17,6 +18,34 @@ def log_path() -> Path:
 
 
 LOG_PATH = log_path()
+
+
+def redact_support_value(value):
+    """Recursively replace the Windows user home in support-facing values."""
+    if isinstance(value, dict):
+        return {key: redact_support_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_support_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_support_value(item) for item in value)
+    if not isinstance(value, str):
+        return value
+
+    candidates = {
+        str(Path.home()),
+        str(os.environ.get("USERPROFILE") or ""),
+    }
+    redacted = value
+    for candidate in sorted((item for item in candidates if item), key=len, reverse=True):
+        variants = {candidate, candidate.replace("\\", "/")}
+        for variant in variants:
+            redacted = re.sub(
+                re.escape(variant),
+                "%USERPROFILE%",
+                redacted,
+                flags=re.IGNORECASE,
+            )
+    return redacted
 
 
 def setup_logging() -> Path:
@@ -78,7 +107,7 @@ def system_summary() -> dict:
     writable_probe = local_data
     while not writable_probe.exists() and writable_probe != writable_probe.parent:
         writable_probe = writable_probe.parent
-    return {
+    return redact_support_value({
         "version": __version__,
         "python": sys.version.split()[0],
         "executable": sys.executable,
@@ -89,4 +118,4 @@ def system_summary() -> dict:
         "models_dir": str(models_dir_path()),
         "log_path": str(log_path()),
         "appdata_writable": writable_probe.exists() and os.access(writable_probe, os.W_OK),
-    }
+    })

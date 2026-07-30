@@ -16,6 +16,22 @@ class DictationState(str, Enum):
     ERROR = "error"
 
 
+def shutdown_disposition(
+    state: DictationState,
+    *,
+    post_delivery_pending: bool = False,
+) -> str:
+    """Choose a lossless quit action for the active dictation state."""
+    if post_delivery_pending or state in {
+        DictationState.PROCESSING,
+        DictationState.INJECTING,
+    }:
+        return "defer"
+    if state == DictationState.RECORDING:
+        return "cancel"
+    return "proceed"
+
+
 @dataclass
 class DictationSession:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)

@@ -83,7 +83,7 @@ def _doctor(args: argparse.Namespace) -> int:
 def _transcribe(args: argparse.Namespace) -> int:
     from .config import Config
     from .transcriber import get_engine
-    from .transcriber.file_transcriber import transcribe_file
+    from .transcriber.file_transcriber import transcribe_file, unique_output_paths
 
     sources = [Path(value).expanduser().resolve() for value in args.input]
     missing = [source for source in sources if not source.is_file()]
@@ -126,8 +126,12 @@ def _transcribe(args: argparse.Namespace) -> int:
             print(output)
         else:
             output.mkdir(parents=True, exist_ok=True)
-            for source, result in results:
-                destination = output / f"{source.stem}.{args.format}"
+            destinations = unique_output_paths(
+                [source for source, _result in results],
+                output,
+                f".{args.format}",
+            )
+            for (source, result), destination in zip(results, destinations):
                 destination.write_text(
                     _render_file_result(result, args.format, args.timestamps),
                     encoding="utf-8",

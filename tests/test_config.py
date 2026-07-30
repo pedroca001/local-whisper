@@ -86,6 +86,42 @@ def test_invalid_writing_profiles_are_normalized(monkeypatch, tmp_path):
     loaded = Config.load()
     assert len(loaded.dictation_modes) == 1
     assert loaded.dictation_modes[0]["id"] == "custom"
-    assert loaded.dictation_modes[0]["output_action"] == "insert"
+    assert loaded.dictation_modes[0]["output_action"] == "default"
     assert loaded.dictation_modes[0]["app_patterns"] == []
     assert loaded.active_mode_id == "custom"
+
+
+def test_schema_two_builtin_profiles_inherit_the_global_output(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "output_action": "clipboard",
+                "active_mode_id": "default",
+                "history_retention_days": 30,
+                "onboarding_complete": False,
+                "dictation_modes": [
+                    {
+                        "id": "default",
+                        "name": "Natural",
+                        "output_action": "insert",
+                        "remove_fillers": True,
+                        "spoken_commands": True,
+                        "app_patterns": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = Config.load()
+
+    assert loaded.schema_version == CURRENT_SCHEMA_VERSION
+    assert loaded.output_action == "clipboard"
+    assert loaded.dictation_modes[0]["output_action"] == "default"
+    assert loaded.history_retention_days == 30
+    assert loaded.onboarding_complete is False

@@ -215,3 +215,13 @@ class SettingsWindow(QMainWindow):
         hotkey = " + ".join(p.capitalize() for p in self.cfg.hotkey_toggle.split("+") if p)
         self.footer_model.setText(f"Model: {self.cfg.model}")
         self.footer_hotkey.setText(f"Hotkey: {hotkey}")
+
+    def shutdown(self) -> bool:
+        """Cancel and join page workers before QApplication is destroyed."""
+        return all(
+            (
+                self.page_transcribe_file.shutdown(),
+                self.page_history.shutdown(),
+                self.page_diagnostics.shutdown(),
+            )
+        )

@@ -30,6 +30,8 @@ _SPOKEN_COMMANDS: tuple[tuple[str, str], ...] = (
     (r"\b(?:fecha aspas|close quote)\b", '"'),
 )
 
+_OUTPUT_ACTIONS = {"insert", "insert_enter", "clipboard", "history"}
+
 
 def remove_fillers(text: str) -> str:
     result = text
@@ -94,6 +96,47 @@ def process_stream_delta(text: str, *, spoken_commands: bool = True) -> str:
     return apply_spoken_commands(text)
 
 
+def resolve_output_action(mode: dict, default_action: str) -> str:
+    """Resolve an optional profile override against the global default."""
+    fallback = default_action if default_action in _OUTPUT_ACTIONS else "insert"
+    selected = str(mode.get("output_action") or "default")
+    return selected if selected in _OUTPUT_ACTIONS else fallback
+
+
+def output_action_allows_insertion(output_action: str) -> bool:
+    return output_action in {"insert", "insert_enter"}
+
+
+def should_process_final_transcript(
+    *,
+    streaming: bool,
+    output_action: str,
+    needs_recovery: bool,
+) -> bool:
+    """Return whether the final text still needs the complete post-processing pass."""
+    return (
+        not streaming
+        or needs_recovery
+        or not output_action_allows_insertion(output_action)
+    )
+
+
+def should_submit_enter(
+    *,
+    output_action: str,
+    can_inject: bool,
+    injected: bool,
+    needs_recovery: bool,
+) -> bool:
+    """Gate Enter so a divergent streaming result can never be submitted."""
+    return (
+        output_action == "insert_enter"
+        and can_inject
+        and injected
+        and not needs_recovery
+    )
+
+
 def mode_for_target(
     modes: Iterable[dict],
     active_mode_id: str,
@@ -112,7 +155,7 @@ def mode_for_target(
     return available[0] if available else {
         "id": "default",
         "name": "Natural",
-        "output_action": "insert",
+        "output_action": "default",
         "remove_fillers": True,
         "spoken_commands": True,
     }

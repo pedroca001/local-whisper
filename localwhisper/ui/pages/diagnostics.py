@@ -123,6 +123,14 @@ class DiagnosticsPage(QWidget):
         self._worker = None
         self._thread = None
 
+    def shutdown(self, timeout_ms: int = 5000) -> bool:
+        thread = self._thread
+        if thread is None or not thread.isRunning():
+            return True
+        thread.requestInterruption()
+        thread.quit()
+        return bool(thread.wait(timeout_ms))
+
     def _copy(self) -> None:
         if self._result:
             QGuiApplication.clipboard().setText(

@@ -108,6 +108,7 @@ class ModesPage(QWidget):
         )
 
         self.mode_output = QComboBox()
+        self.mode_output.addItem("Use default output", "default")
         self.mode_output.addItem("Insert at cursor", "insert")
         self.mode_output.addItem("Insert and press Enter", "insert_enter")
         self.mode_output.addItem("Copy to clipboard", "clipboard")
@@ -327,7 +328,7 @@ class ModesPage(QWidget):
                 "id": mode_id,
                 "name": name,
                 "description": "Custom writing profile.",
-                "output_action": "insert",
+                "output_action": "default",
                 "remove_fillers": True,
                 "spoken_commands": True,
                 "app_patterns": [],
@@ -394,7 +395,7 @@ class ModesPage(QWidget):
         try:
             self.cfg.active_mode_id = str(mode.get("id") or "default")
             self.mode_apps.setText(", ".join(str(v) for v in mode.get("app_patterns") or []))
-            index = self.mode_output.findData(str(mode.get("output_action") or "insert"))
+            index = self.mode_output.findData(str(mode.get("output_action") or "default"))
             self.mode_output.setCurrentIndex(max(0, index))
             self.mode_fillers.setChecked(bool(mode.get("remove_fillers", True)))
             self.mode_commands.setChecked(bool(mode.get("spoken_commands", True)))
@@ -414,7 +415,7 @@ class ModesPage(QWidget):
             for value in self.mode_apps.text().split(",")
             if value.strip()
         ]
-        mode["output_action"] = str(self.mode_output.currentData() or "insert")
+        mode["output_action"] = str(self.mode_output.currentData() or "default")
         mode["remove_fillers"] = self.mode_fillers.isChecked()
         mode["spoken_commands"] = self.mode_commands.isChecked()
         self.cfg.save()

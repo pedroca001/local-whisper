@@ -31,7 +31,11 @@ from PySide6.QtWidgets import (
 )
 
 from ...config import Config
-from ...transcriber.file_transcriber import CancellationToken, FileTranscriptionCancelled
+from ...transcriber.file_transcriber import (
+    CancellationToken,
+    FileTranscriptionCancelled,
+    unique_output_paths,
+)
 from ..widgets.card import Card
 
 SUPPORTED_FILTER = (
@@ -538,6 +542,16 @@ class TranscribeFilePage(QWidget):
         self._thread = None
         self._worker = None
 
+    def shutdown(self, timeout_ms: int = 15000) -> bool:
+        thread = self._thread
+        if thread is None or not thread.isRunning():
+            return True
+        if self._worker is not None:
+            self._worker.cancel()
+        thread.requestInterruption()
+        thread.quit()
+        return bool(thread.wait(timeout_ms))
+
     # ── output rendering ──────────────────────────────────────────────
     def _refresh_view(self) -> None:
         if not self._results:
@@ -586,12 +600,13 @@ class TranscribeFilePage(QWidget):
                 )
                 if not folder:
                     return
-                for source, result in self._results:
-                    self._write_result(
-                        Path(folder) / f"{Path(source).stem}{suffix}",
-                        result,
-                        suffix,
-                    )
+                destinations = unique_output_paths(
+                    [source for source, _result in self._results],
+                    folder,
+                    suffix,
+                )
+                for (_source, result), destination in zip(self._results, destinations):
+                    self._write_result(destination, result, suffix)
                 self.status_lbl.setText(f"Saved {len(self._results)} transcripts to {folder}")
         except Exception as exc:
             logging.exception("Save failed")

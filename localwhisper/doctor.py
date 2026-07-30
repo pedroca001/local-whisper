@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 
 from .config import config_path, history_db_path, models_dir_path
-from .diagnostics import system_summary
+from .diagnostics import redact_support_value, system_summary
 
 
 def _module_status(name: str) -> dict:
@@ -93,8 +93,8 @@ def run_doctor() -> dict:
         and checks["history"]["ok"]
         and all(item["available"] for item in checks["dependencies"].values())
     )
-    return {
+    return redact_support_value({
         "ok": required_ok,
         "summary": summary,
         "checks": checks,
-    }
+    })

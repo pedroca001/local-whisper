@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .secret_store import SecretStore
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def _appdata_dir() -> Path:
@@ -57,7 +57,7 @@ def default_dictation_modes() -> list[dict]:
             "id": "default",
             "name": "Natural",
             "description": "Balanced dictation with clean punctuation.",
-            "output_action": "insert",
+            "output_action": "default",
             "remove_fillers": True,
             "spoken_commands": True,
             "app_patterns": [],
@@ -66,7 +66,7 @@ def default_dictation_modes() -> list[dict]:
             "id": "verbatim",
             "name": "Verbatim",
             "description": "Faithful transcript without cleanup.",
-            "output_action": "insert",
+            "output_action": "default",
             "remove_fillers": False,
             "spoken_commands": False,
             "app_patterns": [],
@@ -75,7 +75,7 @@ def default_dictation_modes() -> list[dict]:
             "id": "prompt",
             "name": "AI Prompt",
             "description": "Clean technical dictation for coding assistants.",
-            "output_action": "insert",
+            "output_action": "default",
             "remove_fillers": True,
             "spoken_commands": True,
             "app_patterns": ["codex", "cursor", "code", "chatgpt", "claude"],
@@ -84,7 +84,7 @@ def default_dictation_modes() -> list[dict]:
             "id": "email",
             "name": "Email",
             "description": "Polished paragraphs for email clients.",
-            "output_action": "insert",
+            "output_action": "default",
             "remove_fillers": True,
             "spoken_commands": True,
             "app_patterns": ["outlook", "mail", "gmail"],
@@ -93,7 +93,7 @@ def default_dictation_modes() -> list[dict]:
             "id": "chat",
             "name": "Chat",
             "description": "Concise dictation for messaging apps.",
-            "output_action": "insert",
+            "output_action": "default",
             "remove_fillers": True,
             "spoken_commands": True,
             "app_patterns": ["slack", "teams", "discord", "whatsapp", "telegram"],
@@ -198,7 +198,7 @@ class Config:
             self.dictation_modes.extend(
                 mode for mode in defaults if str(mode.get("id")) not in known
             )
-        if previous_schema < CURRENT_SCHEMA_VERSION:
+        if previous_schema < 2:
             # Onboarding is for first installs. Existing users already have a
             # working microphone/hotkey setup and should not be interrupted by
             # an upgrade dialog.
@@ -206,6 +206,18 @@ class Config:
             # Older releases kept history indefinitely. Preserve that contract
             # during migration instead of silently pruning an existing archive.
             self.history_retention_days = 0
+        if previous_schema < 3:
+            builtin_ids = {
+                str(mode.get("id"))
+                for mode in default_dictation_modes()
+            }
+            for mode in self.dictation_modes:
+                if (
+                    isinstance(mode, dict)
+                    and str(mode.get("id")) in builtin_ids
+                    and mode.get("output_action") == "insert"
+                ):
+                    mode["output_action"] = "default"
         self.schema_version = CURRENT_SCHEMA_VERSION
         if not self.vocabulary_replacements:
             vocab = {str(w).strip().lower() for w in self.vocabulary if str(w).strip()}
@@ -239,9 +251,15 @@ class Config:
             mode_id = str(value.get("id") or f"profile-{index + 1}").strip()
             if not mode_id or mode_id in seen_ids:
                 continue
-            output_action = str(value.get("output_action") or "insert")
-            if output_action not in {"insert", "insert_enter", "clipboard", "history"}:
-                output_action = "insert"
+            output_action = str(value.get("output_action") or "default")
+            if output_action not in {
+                "default",
+                "insert",
+                "insert_enter",
+                "clipboard",
+                "history",
+            }:
+                output_action = "default"
             patterns = value.get("app_patterns")
             normalized_modes.append(
                 {

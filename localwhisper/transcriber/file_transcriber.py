@@ -38,6 +38,34 @@ import numpy as np
 SAMPLE_RATE = 16000  # Whisper / pyannote both want 16 kHz mono
 
 
+def unique_output_paths(
+    sources: list[str | Path],
+    output_dir: str | Path,
+    suffix: str,
+) -> list[Path]:
+    """Choose stable batch destinations without overwriting existing files."""
+    folder = Path(output_dir)
+    normalized_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    reserved = {
+        path.name.casefold()
+        for path in folder.iterdir()
+        if path.is_file()
+    } if folder.is_dir() else set()
+    destinations: list[Path] = []
+    for source in sources:
+        stem = Path(source).stem
+        sequence = 1
+        while True:
+            postfix = "" if sequence == 1 else f"-{sequence}"
+            name = f"{stem}{postfix}{normalized_suffix}"
+            if name.casefold() not in reserved:
+                reserved.add(name.casefold())
+                destinations.append(folder / name)
+                break
+            sequence += 1
+    return destinations
+
+
 # ─── ffmpeg discovery ──────────────────────────────────────────────────────
 def _ffmpeg_path() -> str | None:
     """Return path to ffmpeg, searching PATH first, then a few well-known places."""

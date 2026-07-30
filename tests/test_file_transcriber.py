@@ -64,3 +64,22 @@ def test_cancelled_job_stops_before_decode():
             diarize=False,
             cancel_token=token,
         )
+
+
+def test_batch_output_paths_do_not_overwrite_same_stem_or_existing_files(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "meeting.txt").write_text("existing", encoding="utf-8")
+    sources = [
+        tmp_path / "team-a" / "meeting.wav",
+        tmp_path / "team-b" / "meeting.mp3",
+        tmp_path / "team-c" / "notes.wav",
+    ]
+
+    paths = ft.unique_output_paths(sources, output, ".txt")
+
+    assert [path.name for path in paths] == [
+        "meeting-2.txt",
+        "meeting-3.txt",
+        "notes.txt",
+    ]
