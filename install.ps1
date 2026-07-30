@@ -71,6 +71,15 @@ $VenvPy = Join-Path $Venv "Scripts\python.exe"
 $VenvPyw = Join-Path $Venv "Scripts\pythonw.exe"
 $RunPy = Join-Path $Root "run.py"
 $IconIco = Join-Path $Root "localwhisper\resources\icons\icon.ico"
+$VersionMatch = [regex]::Match(
+    (Get-Content (Join-Path $Root "pyproject.toml") -Raw),
+    '(?m)^version\s*=\s*"([^"]+)"'
+)
+if (-not $VersionMatch.Success) {
+    Write-Error "Could not read the LocalWhisper version from pyproject.toml."
+    exit 1
+}
+$ProjectVersion = $VersionMatch.Groups[1].Value
 
 function Step($msg) { Write-Host ""; Write-Host "==> $msg" -ForegroundColor Cyan }
 function Info($msg) { Write-Host "    $msg" -ForegroundColor Gray }
@@ -79,6 +88,7 @@ function Warn($msg) { Write-Host "    $msg" -ForegroundColor Yellow }
 
 Write-Host ""
 Write-Host "LocalWhisper installer" -ForegroundColor Cyan
+Write-Host "Version: $ProjectVersion"
 Write-Host "Repo: $Root"
 Write-Host "Venv: $Venv"
 
@@ -93,6 +103,31 @@ if ($Check) {
         Write-Error "LocalWhisper virtualenv was not found at: $Venv"
         exit 1
     }
+    $ProbeOutput = @()
+    $ProbeExitCode = 1
+    Push-Location ([System.IO.Path]::GetTempPath())
+    try {
+        $ProbeOutput = @(
+            & $VenvPy -c "from pathlib import Path; import localwhisper; print(localwhisper.__version__); print(Path(localwhisper.__file__).resolve().parents[1])"
+        )
+        $ProbeExitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+    $InstalledVersion = if ($ProbeOutput.Count -ge 1) { $ProbeOutput[0].Trim() } else { "" }
+    if ($ProbeExitCode -ne 0 -or $InstalledVersion -ne $ProjectVersion) {
+        Write-Error "Installed LocalWhisper version is '$InstalledVersion'; expected '$ProjectVersion'. Run with -Repair."
+        exit 1
+    }
+    $InstalledRoot = if ($ProbeOutput.Count -ge 2) { $ProbeOutput[-1].Trim() } else { "" }
+    $ExpectedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd("\")
+    $ActualRoot = [System.IO.Path]::GetFullPath($InstalledRoot).TrimEnd("\")
+    if (-not $ActualRoot.Equals($ExpectedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Write-Error "Editable install points to '$ActualRoot'; expected '$ExpectedRoot'. Run with -Repair."
+        exit 1
+    }
+    Ok "Version $InstalledVersion and editable source path verified."
     & $VenvPy -m pip check
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Python dependency check failed."

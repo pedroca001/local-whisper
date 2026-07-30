@@ -2,7 +2,7 @@
 ; Download Inno Setup 6: https://jrsoftware.org/isinfo.php
 
 #define AppName      "LocalWhisper"
-#define AppVersion   "0.1.0"
+#define AppVersion   "0.2.0"
 #define AppPublisher "Pedro"
 #define AppExeName   "LocalWhisper.exe"
 #define DistDir      "dist\LocalWhisper"
@@ -18,7 +18,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
 OutputDir=dist
-OutputBaseFilename=LocalWhisper-Setup
+OutputBaseFilename=LocalWhisper-Setup-{#AppVersion}
 SetupIconFile=localwhisper\resources\icons\icon.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2/ultra64

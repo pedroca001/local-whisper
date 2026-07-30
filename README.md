@@ -10,7 +10,8 @@ ficam no computador.
 - **Streaming ao vivo estável** com consenso entre hipóteses, recuperação segura e cadência adaptativa
 - **Perfis de escrita**: Natural, Verbatim, AI Prompt, Email, Chat e perfis personalizados
 - **Ativação por app**: um perfil pode entrar automaticamente no Outlook, Slack, Codex, navegador etc.
-- **Ações de saída**: inserir, inserir e enviar, copiar ou salvar apenas no histórico
+- **Ações de saída**: inserir, inserir e enviar, copiar ou salvar apenas no
+  histórico; perfis herdam a ação global por padrão e podem substituí-la
 - **Comandos falados** e limpeza local de hesitações, sem depender de API externa
 - **System tray** com menu Settings / Record manually / Quit
 - **Copy last entry no tray**: clique direito no ícone e copie a última transcrição mesmo se o overlay não aparecer
@@ -21,6 +22,10 @@ ficam no computador.
 - **Correções de vocabulário**: regras locais do tipo `cloud -> CLAUDE`
 - **Onboarding e Diagnostics**: primeira configuração guiada e relatório de suporte sem segredos
 - **CLI completa**: gravação, arquivos, lotes, histórico, estatísticas e diagnóstico
+
+No modo `Insert and press Enter`, o Enter só é enviado se a mesma janela
+editável capturada continuar ativa. Streaming nunca injeta deltas quando a ação
+efetiva é `Copy to clipboard` ou `Save to history only`.
 
 ## Requisitos
 
@@ -118,6 +123,8 @@ Notas importantes para agentes:
 - Se o usuário quiser apenas o app sem atalho de Desktop, rode `.\install.ps1 -NoShortcut`.
 - Logs ficam em `%LOCALAPPDATA%\LocalWhisper\app.log` e
   `%LOCALAPPDATA%\LocalWhisper\app.log.err`.
+- Relatórios copiados/salvos pela página Diagnostics substituem o diretório
+  pessoal por `%USERPROFILE%`.
 
 O `install.ps1` é idempotente e faz tudo sozinho:
 
@@ -226,6 +233,8 @@ python run.py doctor --json
 ```
 
 Os switches antigos `--cli`, `--list-models` e `--doctor` continuam aceitos.
+Em lotes, nomes-base repetidos ou já existentes recebem sufixos como `-2` e
+`-3`; nenhum export anterior é sobrescrito silenciosamente.
 
 ## Verificação rápida
 
@@ -270,15 +279,18 @@ sufixo incorreto.
 Gravações silenciosas são descartadas antes de chamar o modelo, evitando frases
 inventadas como "E aí" quando o microfone capturou pouco ou nenhum áudio.
 
-## Empacotamento (.exe)
+## Empacotamento secundário (.exe)
 
-```bash
-pip install pyinstaller
-pyinstaller --onedir --windowed --name LocalWhisper --icon icons/icon.ico --add-data "icons;icons" run.py
+```powershell
+.\build.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
 ```
 
-O modelo Whisper é baixado on-demand no primeiro uso para `%LOCALAPPDATA%\LocalWhisper\models`,
-não embarcado no .exe.
+O instalador Inno Setup gerado usa o nome
+`dist\LocalWhisper-Setup-<versão>.exe`. Esse bundle é uma distribuição
+secundária, limitada aos modelos Whisper: Parakeet e diarização não são
+incluídos. A release suportada continua sendo o source archive do GitHub com
+`install.ps1`. Os modelos Whisper são baixados sob demanda para
+`%LOCALAPPDATA%\LocalWhisper\models`.
 
 ## Testes
 

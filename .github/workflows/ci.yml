@@ -33,6 +33,11 @@ jobs:
       - name: Unit tests
         run: python -m pytest -q
 
+      - name: History UI smoke test
+        run: |
+          python tools/smoke_history_ui.py
+          python tools/smoke_delivery_quit.py
+
       - name: CLI smoke tests
         shell: pwsh
         run: |

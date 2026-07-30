@@ -41,14 +41,14 @@ LocalWhisper é um **aplicativo de ditado offline para Windows** que transcreve 
 | **Bandeja do sistema (tray)** | Menu com: Configurações, Gravar manualmente, Sair |
 | **Copiar última entrada** | Primeira opção do tray; copia a última transcrição para o clipboard |
 | **Interface de configurações** | Janela PySide6 com as páginas abaixo |
-| **Histórico** | Busca, favoritos, métricas, retenção configurável e exportação |
+| **Histórico** | Busca virtualizada, favoritos, métricas, retenção configurável e exportação |
 | **Modo privado** | Não persiste a transcrição nem o espelho `.txt` |
-| **Perfis de escrita** | Presets e perfis customizados com ativação automática por app |
+| **Perfis de escrita** | Presets e perfis customizados com ativação automática por app; herdam a saída global ou definem override |
 | **Push-to-talk** | Alternativa ao hotkey de toggle |
 | **Transcrição de arquivo** | Fila/lote de mp3, mp4, wav, mkv e outros formatos |
 | **Identificação de falantes** | Via pyannote.audio — etiqueta `[Speaker N]` no texto |
 | **Legendas** | Exportação TXT, JSON, SRT e VTT |
-| **Diagnóstico** | Página e CLI para dependências, ffmpeg, banco e CUDA |
+| **Diagnóstico** | Página e CLI para dependências, ffmpeg, banco e CUDA, com caminhos pessoais redigidos |
 | **Inicialização automática** | Pode ser configurado para iniciar com o Windows |
 | **Gerenciador de modelos** | Instala/desinstala modelos e permite escolher a pasta de cache |
 | **Correções de vocabulário** | Regras locais para corrigir termos técnicos após a transcrição |
@@ -138,8 +138,7 @@ O `install.ps1` é idempotente e realiza automaticamente:
 1. Verifica Python 3.10–3.12.
 2. Cria o `.venv` se não existir, ou usa `-VenvPath` quando informado.
 3. Detecta GPU NVIDIA via `nvidia-smi` e escolhe o índice PyTorch correto:
-   - RTX 50xx / Blackwell → `cu128`
-   - Outras NVIDIA → `cu121`
+   - NVIDIA com driver recente → `cu128`
    - Sem NVIDIA → `cpu`
 4. Instala torch + torchaudio se necessário.
 5. `pip install -e .[diarize]` — instalação editável com diarização.

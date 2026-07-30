@@ -25,6 +25,13 @@
   Never write token values to the repo, Brain, logs, config JSON, or chat.
 - Dictation must use the explicit session state machine. Do not allow a second
   recording while finalization or insertion is still in progress.
+- Quit requests during finalization must wait until the result is delivered and
+  persisted; never terminate the active ASR worker and lose the transcription.
+- Writing profiles inherit the global output action unless they explicitly
+  override it. Streaming must never inject for clipboard/history-only output.
+- `insert_enter` must revalidate the exact captured editable HWND before
+  sending Enter; never send Enter to whichever window happens to be focused or
+  when streaming reported a divergent result that needs recovery.
 - Streaming may only inject stable consensus prefixes. If the final hypothesis
   diverges, use the recovery overlay rather than appending a corrupt suffix.
 - Keep partial inference throttled; never run Whisper once per 30 ms audio block.
@@ -55,6 +62,10 @@
 - Run non-GUI tests:
   ```powershell
   & "$env:LOCALAPPDATA\LocalWhisper\venv\Scripts\python.exe" -m pytest tests/
+  ```
+- Run the synthetic History concurrency/virtualization smoke:
+  ```powershell
+  & "$env:LOCALAPPDATA\LocalWhisper\venv\Scripts\python.exe" tools\smoke_history_ui.py
   ```
 - Verify CLI wrapper and model cache:
   ```powershell
