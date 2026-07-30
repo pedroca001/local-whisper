@@ -2,9 +2,19 @@
 .SYNOPSIS
     Build LocalWhisper: PyInstaller bundle plus Inno Setup installer.
 
+.PARAMETER VenvPath
+    Virtualenv containing PyInstaller and the runtime dependencies. Defaults to
+    .venv in the repository.
+
 .EXAMPLE
     .\build.ps1
+    .\build.ps1 -VenvPath "$env:LOCALAPPDATA\LocalWhisper\venv"
 #>
+
+[CmdletBinding()]
+param(
+    [string]$VenvPath
+)
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
@@ -13,12 +23,32 @@ Write-Host ""
 Write-Host "LocalWhisper build" -ForegroundColor Cyan
 Write-Host ""
 
-$venvPy = Join-Path $Root ".venv\Scripts\python.exe"
+$Venv = if ($VenvPath) {
+    if ([System.IO.Path]::IsPathRooted($VenvPath)) {
+        $VenvPath
+    } else {
+        Join-Path $Root $VenvPath
+    }
+} else {
+    Join-Path $Root ".venv"
+}
+$venvPy = Join-Path $Venv "Scripts\python.exe"
 if (-not (Test-Path $venvPy)) {
     Write-Error "Virtual environment not found. Expected: $venvPy"
     exit 1
 }
 Write-Host "Python: $venvPy"
+
+$versionMatch = [regex]::Match(
+    (Get-Content (Join-Path $Root "pyproject.toml") -Raw),
+    '(?m)^version\s*=\s*"([^"]+)"'
+)
+if (-not $versionMatch.Success) {
+    Write-Error "Could not read the project version from pyproject.toml."
+    exit 1
+}
+$version = $versionMatch.Groups[1].Value
+Write-Host "Version: $version"
 
 Write-Host ""
 Write-Host "[1/2] Running PyInstaller..." -ForegroundColor Yellow
@@ -54,10 +84,10 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$setupExe = Join-Path $Root "dist\LocalWhisper-Setup.exe"
+$setupExe = Join-Path $Root "dist\LocalWhisper-Setup-$version.exe"
 $setupSize = [math]::Round((Get-Item $setupExe).Length / 1MB, 1)
 
 Write-Host ""
-Write-Host "Installer ready: dist\LocalWhisper-Setup.exe" -ForegroundColor Green
+Write-Host "Installer ready: dist\LocalWhisper-Setup-$version.exe" -ForegroundColor Green
 Write-Host "Size: $setupSize MB"
 Write-Host ""

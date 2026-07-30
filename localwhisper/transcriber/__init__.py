@@ -16,10 +16,7 @@ def __getattr__(name):
     # Lazy re-exports so importing `localwhisper.transcriber` doesn't pull in
     # ffmpeg/pyannote at startup.
     if name in ("transcribe_file", "FileTranscript", "TranscriptSegment"):
-        from .file_transcriber import (
-            FileTranscript,
-            TranscriptSegment,
-            transcribe_file,
-        )
-        return locals()[name]
+        from . import file_transcriber as _file_transcriber
+
+        return getattr(_file_transcriber, name)
     raise AttributeError(name)

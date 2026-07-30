@@ -1,5 +1,6 @@
 """Unit tests for the Unicode injector — verifies INPUT struct layout for accents/emoji."""
 import sys
+
 import pytest
 
 if sys.platform != "win32":
@@ -12,11 +13,10 @@ from localwhisper.injector import (
     CF_ENHMETAFILE,
     CF_PALETTE,
     CF_UNICODETEXT,
-    INPUT,
-    KEYBDINPUT,
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
     VK_CONTROL,
+    VK_RETURN,
     VK_V,
     _clipboard_format_uses_hglobal,
     _dword_clipboard_bytes,
@@ -65,6 +65,13 @@ def test_ctrl_v_virtual_key_input():
     assert down.ki.wVk == VK_CONTROL
     assert down.ki.dwFlags == 0
     assert up.ki.wVk == VK_V
+    assert up.ki.dwFlags & KEYEVENTF_KEYUP
+
+
+def test_enter_virtual_key_is_available_for_auto_send():
+    down = _make_vk_input(VK_RETURN)
+    up = _make_vk_input(VK_RETURN, key_up=True)
+    assert down.ki.wVk == VK_RETURN
     assert up.ki.dwFlags & KEYEVENTF_KEYUP
 
 

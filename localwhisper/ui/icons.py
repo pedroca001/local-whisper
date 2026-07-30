@@ -136,4 +136,5 @@ def all_icons() -> dict[str, QIcon]:
         "Configuration": configuration_icon(),
         "Sound": sound_icon(),
         "History": history_icon(),
+        "Diagnostics": configuration_icon(),
     }

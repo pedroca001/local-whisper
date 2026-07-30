@@ -167,6 +167,8 @@ stub._last_text_injected = False
 stub._clipboard_restore_snapshot = None
 stub._clipboard_restore_pending = False
 stub._clipboard_restore_generation = 0
+stub._enter_pending = False
+stub._quit_pending = False
 
 ok = App._inject_text_into(
     stub,
@@ -243,6 +245,8 @@ stub._last_text_injected = False
 stub._clipboard_restore_snapshot = None
 stub._clipboard_restore_pending = False
 stub._clipboard_restore_generation = 0
+stub._enter_pending = False
+stub._quit_pending = False
 
 ok = App._inject_text_into(
     stub,

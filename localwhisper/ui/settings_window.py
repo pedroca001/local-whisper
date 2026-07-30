@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
     QFrame,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from ..config import Config
 from .icons import all_icons
 from .pages.configuration import ConfigurationPage
+from .pages.diagnostics import DiagnosticsPage
 from .pages.history import HistoryPage
 from .pages.home import HomePage
 from .pages.modes import ModesPage
@@ -35,7 +36,16 @@ class SettingsWindow(QMainWindow):
     config_changed = Signal()
     record_now_requested = Signal()
 
-    SIDEBAR_ITEMS = ["Home", "Modes", "Transcribe File", "Vocabulary", "Configuration", "Sound", "History"]
+    SIDEBAR_ITEMS = [
+        "Home",
+        "Modes",
+        "Transcribe File",
+        "Vocabulary",
+        "History",
+        "Sound",
+        "Configuration",
+        "Diagnostics",
+    ]
 
     def __init__(self, cfg: Config, parent=None):
         super().__init__(parent)
@@ -98,7 +108,7 @@ class SettingsWindow(QMainWindow):
             item.setSizeHint(QSize(0, 42))
             self.list.addItem(item)
         self.list.setCurrentRow(0)
-        self.list.setFixedHeight(390)
+        self.list.setFixedHeight(440)
         self.list.currentRowChanged.connect(self._switch_page)
         sl.addWidget(self.list)
         sl.addStretch(1)
@@ -141,15 +151,17 @@ class SettingsWindow(QMainWindow):
         self.page_config = ConfigurationPage(cfg)
         self.page_sound = SoundPage(cfg)
         self.page_history = HistoryPage(cfg)
+        self.page_diagnostics = DiagnosticsPage()
 
         self._page_by_name = {
             "Home": self.page_home,
             "Modes": self.page_modes,
             "Transcribe File": self.page_transcribe_file,
             "Vocabulary": self.page_vocabulary,
-            "Configuration": self.page_config,
-            "Sound": self.page_sound,
             "History": self.page_history,
+            "Sound": self.page_sound,
+            "Configuration": self.page_config,
+            "Diagnostics": self.page_diagnostics,
         }
         for name in self.SIDEBAR_ITEMS:
             self.stack.addWidget(self._scroll_page(self._page_by_name[name]))
@@ -183,9 +195,14 @@ class SettingsWindow(QMainWindow):
         if idx < 0 or idx >= self.stack.count():
             return
         self.stack.setCurrentIndex(idx)
+        scroll = self.stack.widget(idx)
+        if isinstance(scroll, QScrollArea):
+            QTimer.singleShot(0, lambda s=scroll: s.verticalScrollBar().setValue(0))
         name = self.SIDEBAR_ITEMS[idx] if 0 <= idx < len(self.SIDEBAR_ITEMS) else None
         if name == "History":
             self.page_history.refresh_async()
+        elif name == "Diagnostics":
+            self.page_diagnostics.refresh()
         elif name == "Home":
             self.page_home.refresh()
 
@@ -198,3 +215,13 @@ class SettingsWindow(QMainWindow):
         hotkey = " + ".join(p.capitalize() for p in self.cfg.hotkey_toggle.split("+") if p)
         self.footer_model.setText(f"Model: {self.cfg.model}")
         self.footer_hotkey.setText(f"Hotkey: {hotkey}")
+
+    def shutdown(self) -> bool:
+        """Cancel and join page workers before QApplication is destroyed."""
+        return all(
+            (
+                self.page_transcribe_file.shutdown(),
+                self.page_history.shutdown(),
+                self.page_diagnostics.shutdown(),
+            )
+        )

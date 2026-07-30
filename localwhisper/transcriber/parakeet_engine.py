@@ -33,6 +33,10 @@ class ParakeetEngine(TranscriberEngine):
         self._lock = threading.Lock()
         self._stream_audio: list[np.ndarray] = []
         self._stream_emitted: str = ""
+        self._stream_candidate: str = ""
+        self._stream_sample_count = 0
+        self._stream_last_partial_samples = 0
+        self.stream_needs_recovery = False
         self._stream_lang: str = "pt"
         self._stream_on_delta: Optional[OnDeltaFn] = None
         self._stream_min_seconds = 1.5
@@ -142,6 +146,10 @@ class ParakeetEngine(TranscriberEngine):
         super().start_stream(language=language, on_delta=on_delta, vad_filter=vad_filter, vocabulary=vocabulary)
         self._stream_audio = []
         self._stream_emitted = ""
+        self._stream_candidate = ""
+        self._stream_sample_count = 0
+        self._stream_last_partial_samples = 0
+        self.stream_needs_recovery = False
         self._stream_lang = language
         self._stream_on_delta = on_delta
         if self._model is None:
@@ -149,9 +157,14 @@ class ParakeetEngine(TranscriberEngine):
         self._set_language(language)
 
     def push_chunk(self, samples: np.ndarray) -> None:
-        self._stream_audio.append(samples.astype(np.float32))
-        total = sum(c.size for c in self._stream_audio)
-        if total >= int(self._stream_min_seconds * 16000):
+        chunk = samples.astype(np.float32)
+        self._stream_audio.append(chunk)
+        self._stream_sample_count += chunk.size
+        elapsed_seconds = self._stream_sample_count / 16000.0
+        interval_seconds = min(5.0, self._stream_min_seconds + elapsed_seconds / 60.0)
+        interval_samples = int(interval_seconds * 16000)
+        if self._stream_sample_count - self._stream_last_partial_samples >= interval_samples:
+            self._stream_last_partial_samples = self._stream_sample_count
             self._maybe_emit_partial()
 
     def _maybe_emit_partial(self) -> None:
@@ -171,17 +184,30 @@ class ParakeetEngine(TranscriberEngine):
             return
 
         text = apply_replacements(self._extract_text(outputs).strip(), None, getattr(self, "_stream_vocabulary", []))
-        if text and text != self._stream_emitted:
-            if text.startswith(self._stream_emitted):
-                delta = text[len(self._stream_emitted):]
-            else:
-                delta = text[len(self._stream_emitted):] if len(text) > len(self._stream_emitted) else ""
+        if text:
+            stable = ""
+            if self._stream_candidate:
+                common_length = 0
+                for left, right in zip(self._stream_candidate, text):
+                    if left != right:
+                        break
+                    common_length += 1
+                stable = text[:common_length]
+                if stable and len(stable) < len(text) and not stable[-1].isspace():
+                    stable = stable.rsplit(" ", 1)[0] if " " in stable else ""
+            self._stream_candidate = text
+            delta = (
+                stable[len(self._stream_emitted):]
+                if stable.startswith(self._stream_emitted)
+                else ""
+            )
             if delta and self._stream_on_delta:
                 try:
                     self._stream_on_delta(delta)
                 except Exception:
                     pass
-            self._stream_emitted = text
+            if stable:
+                self._stream_emitted = stable
 
     def finalize_stream(self) -> str:
         if not self._stream_audio:
@@ -190,14 +216,17 @@ class ParakeetEngine(TranscriberEngine):
         if looks_like_silence(audio):
             self._stream_audio = []
             self._stream_emitted = ""
+            self._stream_candidate = ""
+            self._stream_sample_count = 0
+            self._stream_last_partial_samples = 0
             return ""
         text = self.transcribe_full(audio, language=self._stream_lang)
 
         delta = ""
         if text.startswith(self._stream_emitted):
             delta = text[len(self._stream_emitted):]
-        elif len(text) > len(self._stream_emitted):
-            delta = text[len(self._stream_emitted):]
+        elif self._stream_emitted:
+            self.stream_needs_recovery = True
         if delta and self._stream_on_delta:
             try:
                 self._stream_on_delta(delta)
@@ -206,4 +235,7 @@ class ParakeetEngine(TranscriberEngine):
 
         self._stream_audio = []
         self._stream_emitted = ""
+        self._stream_candidate = ""
+        self._stream_sample_count = 0
+        self._stream_last_partial_samples = 0
         return text

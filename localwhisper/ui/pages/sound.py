@@ -3,10 +3,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QLabel, QSlider, QVBoxLayout, QWidget
 
-from ..widgets.card import Card
-from ..widgets.toggle_switch import ToggleSwitch
 from ...audio import list_input_devices, list_output_devices
 from ...config import Config
+from ..widgets.card import Card
+from ..widgets.toggle_switch import ToggleSwitch
 
 
 class SoundPage(QWidget):

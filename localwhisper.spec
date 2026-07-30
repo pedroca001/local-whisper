@@ -25,13 +25,14 @@ for pkg in ('ctranslate2', 'faster_whisper', 'onnxruntime', 'huggingface_hub', '
 # optionally and falls back to regular cuBLAS when it is absent.
 # Users who have the full CUDA Toolkit installed get cublasLt automatically.
 import os as _os
+import sys as _sys
 from pathlib import Path as _Path
 
 def _find_cuda_dll(dll_name: str) -> str | None:
     """Find a CUDA 12 DLL in common locations."""
     # 1. torch bundled CUDA (present in the venv used to build)
     _candidates = [
-        _Path('.venv/Lib/site-packages/torch/lib') / dll_name,
+        _Path(_sys.prefix) / 'Lib/site-packages/torch/lib' / dll_name,
     ]
     # 2. CUDA Toolkit environment variables
     for _var in ('CUDA_PATH', 'CUDA_PATH_V12_0', 'CUDA_HOME'):

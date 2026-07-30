@@ -1,14 +1,26 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtWidgets import QFileDialog, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ..widgets.card import Card
-from ..widgets.toggle_switch import ToggleSwitch
 from ...config import Config
-from ...gpu import CUDA_TOOLKIT_URL, get_info as get_gpu_info
+from ...gpu import CUDA_TOOLKIT_URL
+from ...gpu import get_info as get_gpu_info
 from ...model_manager import install_model, list_model_status, uninstall_model
 from ...transcriber import list_models
+from ..widgets.card import Card
+from ..widgets.toggle_switch import ToggleSwitch
 
 
 class _ModelWorker(QObject):
@@ -61,10 +73,52 @@ class ModesPage(QWidget):
         card = Card()
         card.add_title("Default")
 
-        # Preset
+        # Writing profile
         self.preset = QComboBox()
-        self.preset.addItems(["Voice", "Email", "Chat"])
-        card.add_row("Preset", self.preset, sub="Tunes punctuation and formatting style.")
+        for mode in cfg.dictation_modes:
+            self.preset.addItem(str(mode.get("name") or mode.get("id")), str(mode.get("id")))
+        self.preset.setCurrentIndex(max(0, self.preset.findData(cfg.active_mode_id)))
+        preset_wrap = QWidget()
+        preset_layout = QHBoxLayout(preset_wrap)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(6)
+        preset_layout.addWidget(self.preset, stretch=1)
+        add_mode = QPushButton("New")
+        add_mode.clicked.connect(self._create_mode)
+        duplicate_mode = QPushButton("Duplicate")
+        duplicate_mode.clicked.connect(self._duplicate_mode)
+        delete_mode = QPushButton("Delete")
+        delete_mode.setObjectName("DangerButton")
+        delete_mode.clicked.connect(self._delete_mode)
+        preset_layout.addWidget(add_mode)
+        preset_layout.addWidget(duplicate_mode)
+        preset_layout.addWidget(delete_mode)
+        card.add_row(
+            "Writing profile",
+            preset_wrap,
+            sub="Create focused profiles that activate automatically from the current app.",
+        )
+
+        self.mode_apps = QLineEdit()
+        self.mode_apps.setPlaceholderText("outlook, gmail, slack")
+        card.add_row(
+            "Auto-activate in",
+            self.mode_apps,
+            sub="Comma-separated process names or window-title fragments.",
+        )
+
+        self.mode_output = QComboBox()
+        self.mode_output.addItem("Use default output", "default")
+        self.mode_output.addItem("Insert at cursor", "insert")
+        self.mode_output.addItem("Insert and press Enter", "insert_enter")
+        self.mode_output.addItem("Copy to clipboard", "clipboard")
+        self.mode_output.addItem("Save to history only", "history")
+        card.add_row("Output action", self.mode_output)
+
+        self.mode_fillers = ToggleSwitch()
+        card.add_row("Remove hesitation sounds", self.mode_fillers)
+        self.mode_commands = ToggleSwitch()
+        card.add_row("Spoken formatting commands", self.mode_commands)
 
         # Language — locked to PT-BR or EN. PT-BR keeps Whisper anchored to
         # Portuguese (no Japanese/Spanish hallucinations on silence) while the
@@ -171,7 +225,11 @@ class ModesPage(QWidget):
         v.addWidget(card2)
         v.addStretch(1)
 
-        self.preset.currentTextChanged.connect(self._save)
+        self.preset.currentIndexChanged.connect(self._load_selected_mode)
+        self.mode_apps.editingFinished.connect(self._save_mode)
+        self.mode_output.currentIndexChanged.connect(self._save_mode)
+        self.mode_fillers.toggled_changed.connect(self._save_mode)
+        self.mode_commands.toggled_changed.connect(self._save_mode)
         self.language.currentTextChanged.connect(self._save)
         self.voice_model.currentIndexChanged.connect(self._model_changed)
         self.compute_device.currentTextChanged.connect(self._save)
@@ -181,6 +239,8 @@ class ModesPage(QWidget):
 
         self._model_thread: QThread | None = None
         self._model_worker: _ModelWorker | None = None
+        self._loading_mode = False
+        self._load_selected_mode()
         self._refresh_model_status()
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -216,7 +276,7 @@ class ModesPage(QWidget):
                 device_note = (
                     f"GPU (~{m['speed_x_realtime']}x real-time)"
                     if fits
-                    else f"CPU (int8, ~5x real-time)"
+                    else "CPU (int8, ~5x real-time)"
                 )
                 return f"{m['subtitle']} • {device_note}"
         return ""
@@ -225,6 +285,141 @@ class ModesPage(QWidget):
 
     def _model_changed(self, _index: int) -> None:
         self._save()
+
+    def _selected_mode(self) -> dict | None:
+        mode_id = str(self.preset.currentData() or "")
+        for mode in self.cfg.dictation_modes:
+            if str(mode.get("id")) == mode_id:
+                return mode
+        return None
+
+    def _rebuild_presets(self, selected_id: str) -> None:
+        self.preset.blockSignals(True)
+        try:
+            self.preset.clear()
+            for mode in self.cfg.dictation_modes:
+                self.preset.addItem(
+                    str(mode.get("name") or mode.get("id")),
+                    str(mode.get("id")),
+                )
+            self.preset.setCurrentIndex(max(0, self.preset.findData(selected_id)))
+        finally:
+            self.preset.blockSignals(False)
+        self._load_selected_mode()
+
+    def _create_mode(self) -> None:
+        name, accepted = QInputDialog.getText(
+            self,
+            "New writing profile",
+            "Profile name:",
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        existing = {str(mode.get("id")) for mode in self.cfg.dictation_modes}
+        base = "".join(ch.lower() if ch.isalnum() else "-" for ch in name).strip("-") or "profile"
+        mode_id = base
+        suffix = 2
+        while mode_id in existing:
+            mode_id = f"{base}-{suffix}"
+            suffix += 1
+        self.cfg.dictation_modes.append(
+            {
+                "id": mode_id,
+                "name": name,
+                "description": "Custom writing profile.",
+                "output_action": "default",
+                "remove_fillers": True,
+                "spoken_commands": True,
+                "app_patterns": [],
+            }
+        )
+        self.cfg.active_mode_id = mode_id
+        self.cfg.save()
+        self._rebuild_presets(mode_id)
+        self.config_changed.emit()
+
+    def _duplicate_mode(self) -> None:
+        source = self._selected_mode()
+        if source is None:
+            return
+        existing = {str(mode.get("id")) for mode in self.cfg.dictation_modes}
+        base = f"{source.get('id', 'profile')}-copy"
+        mode_id = base
+        suffix = 2
+        while mode_id in existing:
+            mode_id = f"{base}-{suffix}"
+            suffix += 1
+        clone = {
+            **source,
+            "id": mode_id,
+            "name": f"{source.get('name', 'Profile')} Copy",
+            "app_patterns": list(source.get("app_patterns") or []),
+        }
+        self.cfg.dictation_modes.append(clone)
+        self.cfg.active_mode_id = mode_id
+        self.cfg.save()
+        self._rebuild_presets(mode_id)
+        self.config_changed.emit()
+
+    def _delete_mode(self) -> None:
+        selected = self._selected_mode()
+        if selected is None:
+            return
+        if len(self.cfg.dictation_modes) <= 1:
+            QMessageBox.information(self, "Keep one profile", "At least one writing profile is required.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete writing profile",
+            f"Delete “{selected.get('name', selected.get('id'))}”?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        selected_id = str(selected.get("id"))
+        self.cfg.dictation_modes = [
+            mode for mode in self.cfg.dictation_modes if str(mode.get("id")) != selected_id
+        ]
+        next_id = str(self.cfg.dictation_modes[0].get("id") or "default")
+        self.cfg.active_mode_id = next_id
+        self.cfg.save()
+        self._rebuild_presets(next_id)
+        self.config_changed.emit()
+
+    def _load_selected_mode(self, *_args) -> None:
+        mode = self._selected_mode()
+        if mode is None:
+            return
+        self._loading_mode = True
+        try:
+            self.cfg.active_mode_id = str(mode.get("id") or "default")
+            self.mode_apps.setText(", ".join(str(v) for v in mode.get("app_patterns") or []))
+            index = self.mode_output.findData(str(mode.get("output_action") or "default"))
+            self.mode_output.setCurrentIndex(max(0, index))
+            self.mode_fillers.setChecked(bool(mode.get("remove_fillers", True)))
+            self.mode_commands.setChecked(bool(mode.get("spoken_commands", True)))
+        finally:
+            self._loading_mode = False
+        self.cfg.save()
+        self.config_changed.emit()
+
+    def _save_mode(self, *_args) -> None:
+        if self._loading_mode:
+            return
+        mode = self._selected_mode()
+        if mode is None:
+            return
+        mode["app_patterns"] = [
+            value.strip()
+            for value in self.mode_apps.text().split(",")
+            if value.strip()
+        ]
+        mode["output_action"] = str(self.mode_output.currentData() or "default")
+        mode["remove_fillers"] = self.mode_fillers.isChecked()
+        mode["spoken_commands"] = self.mode_commands.isChecked()
+        self.cfg.save()
+        self.config_changed.emit()
 
     def _save(self, *args):
         previous_model = self.cfg.model

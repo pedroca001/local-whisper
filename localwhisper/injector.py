@@ -22,6 +22,7 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 VK_CONTROL = 0x11
 VK_V = 0x56
+VK_RETURN = 0x0D
 VK_SHIFT = 0x10
 VK_MENU = 0x12  # Alt
 VK_LWIN = 0x5B
@@ -406,6 +407,14 @@ def paste_clipboard_hotkey(delay_s: float = 0.025) -> int:
     time.sleep(delay_s)
     sent += _send_input_events([_make_vk_input(VK_CONTROL, key_up=True)])
     return sent
+
+
+def press_enter() -> int:
+    """Press and release Enter after a successful dictation insertion."""
+    return _send_input_events([
+        _make_vk_input(VK_RETURN),
+        _make_vk_input(VK_RETURN, key_up=True),
+    ])
 
 
 def release_modifiers() -> int:

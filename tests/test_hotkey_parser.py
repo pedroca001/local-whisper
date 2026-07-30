@@ -1,10 +1,11 @@
 import sys
+
 import pytest
 
 if sys.platform != "win32":
     pytest.skip("Windows-only", allow_module_level=True)
 
-from localwhisper.hotkey import parse_hotkey, MOD_CONTROL, MOD_ALT, MOD_SHIFT, MOD_NOREPEAT, VK_CODES
+from localwhisper.hotkey import MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_CODES, parse_hotkey
 
 
 def test_ctrl_space():

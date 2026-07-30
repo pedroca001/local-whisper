@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Compile
+        run: python -m compileall -q localwhisper run.py
+
+      - name: Unit tests
+        run: python -m pytest -q
+
+      - name: History UI smoke test
+        run: |
+          python tools/smoke_history_ui.py
+          python tools/smoke_delivery_quit.py
+
+      - name: CLI smoke tests
+        shell: pwsh
+        run: |
+          python run.py --version
+          python run.py --list-models
+          python run.py --doctor --json
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path .\install.ps1),
+            [ref]$null,
+            [ref]$errors
+          )
+          if ($errors) { $errors | Format-List; exit 1 }
